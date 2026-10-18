@@ -58,23 +58,49 @@ export async function graphGet<T = Record<string, unknown>>(path: string, params
 export type MetaLoginKind = "ads" | "instagram";
 const CONFIG_ENV: Record<MetaLoginKind, string> = { ads: "META_ADS_CONFIG_ID", instagram: "META_INSTAGRAM_CONFIG_ID" };
 
+// The two Facebook sign-in routes offered on the consent screen (stored as the
+// connection's identity_provider). "business" picks a Business portfolio and
+// the assets to share, and gets a token that never expires. "personal" is a
+// person's own login (~60 days), for ad accounts or Pages that aren't in any
+// Business portfolio, or someone who isn't an admin of one. A connection with
+// no identity_provider was made the personal way, before the choice existed.
+export const META_BUSINESS = "business";
+export const META_PERSONAL = "personal";
+
 // The Login for Business configuration for this kind of connection, if set.
-// Unsetting the variable falls back to the plain user-token login at once.
+// Unsetting the variable hides the business route and leaves the personal one.
 export function metaBusinessConfig(kind: MetaLoginKind): string | null {
   return process.env[CONFIG_ENV[kind]]?.trim() || null;
 }
 
-// The login dialog. With a configuration, `config_id` replaces `scope` (the
+export function metaBusinessLoginConfigured(kind: MetaLoginKind): boolean {
+  return metaBusinessConfig(kind) !== null;
+}
+
+// authUrl only receives the state string, so the sign-in route chosen on the
+// consent screen is read back out of it (handleConnect builds it).
+export function stateProvider(state: string): string | undefined {
+  try {
+    const parsed = JSON.parse(Buffer.from(state, "base64url").toString("utf8"));
+    return typeof parsed.provider === "string" ? parsed.provider : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// The login dialog. On the business route, `config_id` replaces `scope` (the
 // configuration carries the permissions and assets), and a system-user token
 // needs the authorization-code grant, hence override_default_response_type.
-export function metaDialogUrl(state: string, scopes: string[], kind: MetaLoginKind): string {
+// Anything else, or a business route with no configuration, is the plain
+// scoped login.
+export function metaDialogUrl(state: string, scopes: string[], kind: MetaLoginKind, business: boolean): string {
   const params = new URLSearchParams({
     client_id: env("META_APP_ID"),
     redirect_uri: env("META_OAUTH_REDIRECT_URI"),
     state,
     response_type: "code",
   });
-  const config = metaBusinessConfig(kind);
+  const config = business ? metaBusinessConfig(kind) : null;
   if (config) {
     params.set("config_id", config);
     params.set("override_default_response_type", "true");
@@ -109,7 +135,7 @@ export async function metaClientBusiness(accessToken: string): Promise<{ id: str
 
 export const metaOAuth: OAuthProvider = {
   id: "meta",
-  authUrl: (state) => metaDialogUrl(state, SCOPES, "ads"),
+  authUrl: (state) => metaDialogUrl(state, SCOPES, "ads", stateProvider(state) === META_BUSINESS),
 
   // Exchange the auth code. A business configuration hands back the
   // never-expiring system-user token itself; a plain login hands back a

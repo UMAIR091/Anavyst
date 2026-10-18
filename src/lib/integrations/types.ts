@@ -84,6 +84,16 @@ export type IdentityProviderOption = {
   // provider hasn't approved for public use yet, which outside users would hit
   // as an error. Remove once the approval lands.
   adminsOnly?: boolean;
+  // A fallback route that stands in for the option above it: its button reads
+  // this instead of `label` (and is drawn as secondary) whenever another
+  // option comes first, and plain `label` when it is the only one offered.
+  alternativeLabel?: string;
+  // How a saved sign-in made this way is described ("· via …"). Defaults to
+  // the label without its "Continue with ".
+  via?: string;
+  // Sign-ins saved with no identity_provider (made before the choice existed)
+  // were made this way, so they reconnect through it.
+  legacy?: boolean;
 };
 
 export type IntegrationConfig = Record<string, unknown>;

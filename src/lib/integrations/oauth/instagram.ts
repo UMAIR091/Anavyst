@@ -1,11 +1,14 @@
 // Instagram (professional accounts) backend, producing the platform-agnostic
-// SocialReport shape from src/lib/integrations/social.ts. Two sign-in routes,
+// SocialReport shape from src/lib/integrations/social.ts. Three sign-in routes,
 // chosen on the consent screen and stored as config.identity_provider:
 //
-// - "facebook" (the default, and every connection made before 17 Oct 2026):
-//   Facebook Login on the Meta app, shared with Meta Ads. The user grants
+// - "business" (the default since 18 Oct 2026): Facebook Login for Business
+//   on the Meta app. The user picks a Business portfolio and the Pages and
+//   Instagram accounts to share, and the token never expires.
+// - "facebook" (the fallback, and every connection made before 18 Oct 2026):
+//   a personal Facebook Login on the same app (~60 days). The user grants
 //   their Facebook Pages, and each Page may have a linked
-//   instagram_business_account. Calls go to graph.facebook.com.
+//   instagram_business_account. Both Facebook routes call graph.facebook.com.
 // - "instagram": Business Login for Instagram. The user signs in to the
 //   Instagram account itself, no Facebook Page needed. It has its own app id
 //   and secret (App Dashboard → Instagram → API setup with Instagram login),
@@ -14,7 +17,7 @@
 // Both reach the same IG user node, so the insights code below is shared and
 // only the host differs.
 import type { OAuthProvider, IntegrationAccount } from "../types";
-import { graphGet, metaDialogUrl, metaEnv, metaOAuth } from "./meta";
+import { graphGet, metaDialogUrl, metaEnv, metaOAuth, META_BUSINESS, stateProvider } from "./meta";
 import {
   emptySocialTotals, engagementRate,
   type SocialDay, type SocialPost, type SocialProfile, type SocialReport, type SocialTotals,
@@ -70,17 +73,6 @@ async function igGet<T = Record<string, unknown>>(
 type Get = <T = Record<string, unknown>>(path: string, params: Record<string, string>) => Promise<T>;
 const getterFor = (provider?: string): Get => (viaInstagram(provider) ? igGet : graphGet);
 
-// authUrl only receives the state string, so the provider chosen on the
-// consent screen is read back out of it (handleConnect builds it).
-function providerFromState(state: string): string | undefined {
-  try {
-    const parsed = JSON.parse(Buffer.from(state, "base64url").toString("utf8"));
-    return typeof parsed.provider === "string" ? parsed.provider : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 type LongLivedToken = { access_token: string; expires_in?: number };
 const asTokenSet = (t: LongLivedToken) => ({
   access_token: t.access_token,
@@ -94,7 +86,8 @@ const asTokenSet = (t: LongLivedToken) => ({
 export const instagramOAuth: OAuthProvider = {
   id: "instagram",
   authUrl(state) {
-    if (viaInstagram(providerFromState(state))) {
+    const provider = stateProvider(state);
+    if (viaInstagram(provider)) {
       const params = new URLSearchParams({
         client_id: metaEnv("INSTAGRAM_APP_ID"),
         redirect_uri: metaEnv("META_OAUTH_REDIRECT_URI"),
@@ -109,10 +102,10 @@ export const instagramOAuth: OAuthProvider = {
       });
       return `${IG_AUTHORIZE}?${params.toString()}`;
     }
-    // Facebook route: the "Anavyst Instagram reporting" Login for Business
-    // configuration when set (never-expiring business token), else a plain
-    // login with the scopes above. See metaDialogUrl.
-    return metaDialogUrl(state, SCOPES, "instagram");
+    // Facebook routes: "business" opens the "Anavyst Instagram reporting"
+    // Login for Business configuration (never-expiring business token);
+    // "facebook" is a personal login with the scopes above. See metaDialogUrl.
+    return metaDialogUrl(state, SCOPES, "instagram", provider === META_BUSINESS);
   },
 
   // Code → short-lived token (1 hour) → long-lived token (60 days).

@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchInstagramReport, instagramOAuth, listInstagramAccounts } from "./instagram";
 import { availableIdentityProviders, getIntegration } from "../registry";
 
-// Instagram has two sign-in routes: Facebook Login (graph.facebook.com, via a
-// linked Facebook Page) and Business Login for Instagram (graph.instagram.com).
+// Instagram has three sign-in routes: two Facebook Logins, business and personal
+// (graph.facebook.com, via a linked Facebook Page), and Business Login for
+// Instagram (graph.instagram.com).
 // These pin that each route reaches its own endpoints, and that connections
 // made before the Instagram route existed keep using Facebook.
 
@@ -14,6 +15,7 @@ beforeEach(() => {
   process.env.META_OAUTH_REDIRECT_URI = "https://tryreportflow.com/api/meta/callback";
   process.env.INSTAGRAM_APP_ID = "ig-app";
   process.env.INSTAGRAM_APP_SECRET = "ig-secret";
+  delete process.env.META_INSTAGRAM_CONFIG_ID;
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -119,6 +121,12 @@ describe("sign-in options", () => {
   it("shows the Instagram option to platform admins only, until Meta approves it", () => {
     expect(availableIdentityProviders(def, true).map((p) => p.id)).toEqual(["instagram", "facebook"]);
     expect(availableIdentityProviders(def, false).map((p) => p.id)).toEqual(["facebook"]);
+  });
+
+  it("puts the business Facebook login first once its configuration is set, keeping the personal one", () => {
+    process.env.META_INSTAGRAM_CONFIG_ID = "1095318549962378";
+    expect(availableIdentityProviders(def, true).map((p) => p.id)).toEqual(["instagram", "business", "facebook"]);
+    expect(availableIdentityProviders(def, false).map((p) => p.id)).toEqual(["business", "facebook"]);
   });
 
   it("hides the Instagram option while its app credentials are missing", () => {

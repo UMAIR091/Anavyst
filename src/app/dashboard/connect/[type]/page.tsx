@@ -3,7 +3,9 @@ import { notFound, redirect } from "next/navigation";
 import { ShieldCheck, Eye, Trash2, ArrowRight, LogIn, Users } from "lucide-react";
 import { getCurrentUserAndAgency } from "@/lib/agency";
 import { createClient } from "@/lib/supabase/server";
-import { availableIdentityProviders, getIntegration, isConnectable } from "@/lib/integrations/registry";
+import {
+  availableIdentityProviders, getIntegration, isConnectable, signInButton, signInRouteOf,
+} from "@/lib/integrations/registry";
 import { isPlatformAdmin } from "@/lib/admin";
 import { isShareable } from "@/lib/integrations/connections";
 import { Card, CardContent } from "@/components/ui/card";
@@ -62,18 +64,18 @@ export default async function ConnectConsentPage(
   const uses = (useRows ?? []) as { connection_id: string; client_id: string | null }[];
   const currentSignIn = uses.find((u) => u.client_id === client.id)?.connection_id ?? null;
   const savedSignIns = ((signInRows ?? []) as { id: string; display_name: string | null; identity_provider: string | null; status: string }[]).map((s) => {
-    const option = def.identityProviders?.find((p) => p.id === s.identity_provider);
+    const route = signInRouteOf(def, s.identity_provider);
     return {
       ...s,
       clients: uses.filter((u) => u.connection_id === s.id).length,
       isCurrent: s.id === currentSignIn,
-      via: option ? option.label.replace(/^Continue with /, "") : null,
+      via: route ? route.via ?? route.label.replace(/^Continue with /, "") : null,
       // Renewing goes back through the provider, on the same sign-in route.
       // API-key sign-ins are renewed by entering the key again instead.
       reconnectHref:
-        def.authKind === "apikey" || (def.identityProviders?.length && !signInOptions.some((p) => p.id === s.identity_provider))
+        def.authKind === "apikey" || (def.identityProviders?.length && !signInOptions.some((p) => p.id === route?.id))
           ? null
-          : `${continueHref}&connection=${s.id}${s.identity_provider ? `&provider=${s.identity_provider}` : ""}`,
+          : `${continueHref}&connection=${s.id}${route ? `&provider=${route.id}` : ""}`,
     };
   });
 
@@ -243,13 +245,16 @@ export default async function ConnectConsentPage(
                  Microsoft Ads: Microsoft or Google) show one button per
                  provider; each passes ?provider= to the connect route. */
               <div className="flex w-full flex-col gap-2 sm:max-w-xs">
-                {signInOptions.map((p) => (
-                  <Button key={p.id} asChild>
-                    <a href={`${continueHref}&provider=${p.id}`}>
-                      {p.label} <ArrowRight size={16} />
-                    </a>
-                  </Button>
-                ))}
+                {signInOptions.map((p, i) => {
+                  const button = signInButton(p, i);
+                  return (
+                    <Button key={p.id} asChild variant={button.secondary ? "secondary" : "default"}>
+                      <a href={`${continueHref}&provider=${p.id}`}>
+                        {button.label} <ArrowRight size={16} />
+                      </a>
+                    </Button>
+                  );
+                })}
                 <Button asChild variant="outline">
                   <Link href={backHref}>Cancel</Link>
                 </Button>

@@ -5,7 +5,9 @@
 import {
   listGscSites, fetchGscReportWithComparison, listGa4Properties, fetchGa4ReportWithComparison,
 } from "@/lib/google";
-import { listMetaAdAccounts, fetchMetaAdsReport, metaConfigured } from "./oauth/meta";
+import {
+  listMetaAdAccounts, fetchMetaAdsReport, metaConfigured, metaBusinessLoginConfigured, META_BUSINESS, META_PERSONAL,
+} from "./oauth/meta";
 import {
   listInstagramAccounts, fetchInstagramReport, instagramLoginConfigured, INSTAGRAM_PROVIDER, FACEBOOK_PROVIDER,
 } from "./oauth/instagram";
@@ -117,6 +119,27 @@ export const metaAdsDef: IntegrationDef = {
   status: gated(metaConfigured()),
   oauthProviderId: "meta",
   connectPath: "/api/meta/connect",
+  // Business login first: the user picks the Business portfolio and ad
+  // accounts to share, and the connection never expires. The personal login
+  // stays next to it for ad accounts outside any portfolio, or anyone who
+  // can't share from one. Connections made before 18 Oct 2026 are personal.
+  identityProviders: [
+    {
+      id: META_BUSINESS,
+      label: "Continue with Facebook",
+      via: "Facebook (business)",
+      note: "With Facebook, choose the Business portfolio that owns the client's ad account, then pick the ad account. This connection never expires.",
+      enabled: () => metaBusinessLoginConfigured("ads"),
+    },
+    {
+      id: META_PERSONAL,
+      label: "Continue with Facebook",
+      alternativeLabel: "Use a personal Facebook account instead",
+      via: "personal Facebook",
+      note: "Ad account not in a Business portfolio, or can't share it from there? Use a personal Facebook account instead. That sign-in lasts about 60 days, and you'll be reminded to reconnect before it ends.",
+      legacy: true,
+    },
+  ],
   accountNoun: "ad account",
   accountConfigKey: "account_id",
   snapshotTable: "integration_snapshots",
@@ -144,11 +167,13 @@ export const instagramDef: IntegrationDef = {
   status: gated(metaConfigured()),
   oauthProviderId: "instagram",
   connectPath: "/api/meta/connect",
-  // Two ways in. Instagram sign-in (Business Login for Instagram) logs in to
-  // the account itself and needs no Facebook Page. Facebook sign-in reaches
-  // accounts through the Facebook Page they're linked to, under whichever
-  // Facebook profile the browser is already signed in to. Connections made
-  // before 17 Oct 2026 have no identity_provider and are Facebook ones.
+  // Three ways in. Instagram sign-in (Business Login for Instagram) logs in to
+  // the account itself and needs no Facebook Page. The two Facebook sign-ins
+  // reach accounts through the Facebook Page they're linked to: the business
+  // one through a Business portfolio (never expires), the personal one under
+  // whichever Facebook profile the browser is signed in to (~60 days).
+  // Connections made before 17 Oct 2026 have no identity_provider and are
+  // personal Facebook ones.
   identityProviders: [
     {
       id: INSTAGRAM_PROVIDER,
@@ -161,9 +186,19 @@ export const instagramDef: IntegrationDef = {
       adminsOnly: true,
     },
     {
+      id: META_BUSINESS,
+      label: "Continue with Facebook",
+      via: "Facebook (business)",
+      note: "With Facebook, choose the Business portfolio that owns the Facebook Page this Instagram account is linked to, then pick the Page and the Instagram account. This connection never expires.",
+      enabled: () => metaBusinessLoginConfigured("instagram"),
+    },
+    {
       id: FACEBOOK_PROVIDER,
       label: "Continue with Facebook",
-      note: "With Facebook, sign in with the Facebook profile that manages the Facebook Page this Instagram account is linked to. If Facebook shows someone else's name, choose “Log in to another account” on the next screen.",
+      alternativeLabel: "Use a personal Facebook account instead",
+      via: "personal Facebook",
+      note: "Page not in a Business portfolio? Use a personal Facebook account instead: sign in with the Facebook profile that manages the Page (if Facebook shows someone else's name, choose “Log in to another account”). That sign-in lasts about 60 days, and you'll be reminded to reconnect before it ends.",
+      legacy: true,
     },
   ],
   accountNoun: "account",

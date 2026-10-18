@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { CheckCircle2, ShieldCheck, AlertTriangle, ArrowRight } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getIntegration } from "@/lib/integrations/registry";
+import { getIntegration, signInButton } from "@/lib/integrations/registry";
 import { integrationIcon, integrationTint } from "@/components/integrationVisuals";
 import { linkSignInOptions, loadConnectLink, type LinkBranding } from "@/lib/connectLinks";
 import type { IntegrationConfig } from "@/lib/integrations/types";
@@ -192,21 +192,40 @@ export default async function ConnectLinkPage(props: Props) {
                   another login. */}
               {(!working || (byClient && !(selected && accounts.length > 0))) && (
                 <div className="mt-4 flex flex-wrap gap-2">
-                  {(options.length ? options.map((o) => ({ href: startHref(o.id), label: o.label })) : [{ href: startHref(), label: `Connect ${def.name}` }]).map((b) => (
-                    <a
-                      key={b.href}
-                      href={b.href}
-                      className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-ink-900 px-4 text-sm font-medium text-white"
-                      style={accent ? { backgroundColor: accent } : undefined}
-                    >
-                      {working && byClient ? "Use a different account" : b.label} <ArrowRight size={15} aria-hidden />
-                    </a>
-                  ))}
+                  {(options.length
+                    ? options.map((o, i) => ({ href: startHref(o.id), ...signInButton(o, i) }))
+                    : [{ href: startHref(), label: `Connect ${def.name}`, secondary: false }]
+                  ).map((b) =>
+                    b.secondary ? (
+                      <a
+                        key={b.href}
+                        href={b.href}
+                        className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-ink-200 bg-surface px-4 text-sm font-medium text-ink-800"
+                      >
+                        {b.label} <ArrowRight size={15} aria-hidden />
+                      </a>
+                    ) : (
+                      <a
+                        key={b.href}
+                        href={b.href}
+                        className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-ink-900 px-4 text-sm font-medium text-white"
+                        style={accent ? { backgroundColor: accent } : undefined}
+                      >
+                        {working && byClient && options.length <= 1 ? "Use a different account" : b.label}{" "}
+                        <ArrowRight size={15} aria-hidden />
+                      </a>
+                    )
+                  )}
                 </div>
               )}
-              {options.find((o) => o.note) && !working && (
-                <p className="mt-3 text-xs leading-relaxed text-ink-500">{options.find((o) => o.note)!.note}</p>
-              )}
+              {!working &&
+                options
+                  .filter((o) => o.note)
+                  .map((o) => (
+                    <p key={o.id} className="mt-3 text-xs leading-relaxed text-ink-500">
+                      {o.note}
+                    </p>
+                  ))}
             </li>
           );
         })}

@@ -160,6 +160,19 @@ export function availableIdentityProviders(def: IntegrationDef, viewerIsAdmin: b
   return (def.identityProviders ?? []).filter((p) => (p.enabled?.() ?? true) && (!p.adminsOnly || viewerIsAdmin));
 }
 
+// A sign-in button's text and weight, by its place among the options shown.
+export function signInButton(p: IdentityProviderOption, index: number): { label: string; secondary: boolean } {
+  const alternative = index > 0 && Boolean(p.alternativeLabel);
+  return { label: alternative ? p.alternativeLabel! : p.label, secondary: alternative };
+}
+
+// The route a saved sign-in was made through: its stored identity_provider, or
+// for one saved before the integration offered a choice, the legacy option.
+export function signInRouteOf(def: IntegrationDef, identityProvider: string | null): IdentityProviderOption | undefined {
+  const options = def.identityProviders ?? [];
+  return identityProvider ? options.find((p) => p.id === identityProvider) : options.find((p) => p.legacy);
+}
+
 // The OAuth backend for a given data source type (used by token refresh + callback).
 export function oauthForType(type: string | null | undefined): OAuthProvider | undefined {
   const def = getIntegration(type);
