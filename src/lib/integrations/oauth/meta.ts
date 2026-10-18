@@ -1,7 +1,14 @@
 // Meta (Facebook) OAuth backend + Marketing API helpers. Pure HTTP, no DB.
-// Meta issues long-lived (~60 day) user tokens and has no refresh token, so we
-// "refresh" by re-exchanging the still-valid long-lived token (fb_exchange_token)
-// and store the result as both access and refresh token.
+//
+// Two kinds of token, depending on how the login dialog is opened:
+// - With a Facebook Login for Business configuration (META_ADS_CONFIG_ID /
+//   META_INSTAGRAM_CONFIG_ID, set 18 Oct 2026): the person picks a business
+//   portfolio and the assets to share, and the code exchanges for a business
+//   integration system-user token that never expires. It lasts until that
+//   business removes the app (Business Settings → Integrations → Connected
+//   apps).
+// - Without one: a person's long-lived (~60 day) user token, which can't be
+//   extended (see refresh), so the user has to sign in again.
 import crypto from "node:crypto";
 import type { OAuthProvider, TokenSet, IntegrationAccount } from "../types";
 import { adWindows, windowFields } from "../metrics";
@@ -47,21 +54,67 @@ export async function graphGet<T = Record<string, unknown>>(path: string, params
   return data as T;
 }
 
+// ── Facebook Login for Business ─────────────────────────────
+export type MetaLoginKind = "ads" | "instagram";
+const CONFIG_ENV: Record<MetaLoginKind, string> = { ads: "META_ADS_CONFIG_ID", instagram: "META_INSTAGRAM_CONFIG_ID" };
+
+// The Login for Business configuration for this kind of connection, if set.
+// Unsetting the variable falls back to the plain user-token login at once.
+export function metaBusinessConfig(kind: MetaLoginKind): string | null {
+  return process.env[CONFIG_ENV[kind]]?.trim() || null;
+}
+
+// The login dialog. With a configuration, `config_id` replaces `scope` (the
+// configuration carries the permissions and assets), and a system-user token
+// needs the authorization-code grant, hence override_default_response_type.
+export function metaDialogUrl(state: string, scopes: string[], kind: MetaLoginKind): string {
+  const params = new URLSearchParams({
+    client_id: env("META_APP_ID"),
+    redirect_uri: env("META_OAUTH_REDIRECT_URI"),
+    state,
+    response_type: "code",
+  });
+  const config = metaBusinessConfig(kind);
+  if (config) {
+    params.set("config_id", config);
+    params.set("override_default_response_type", "true");
+  } else {
+    params.set("scope", scopes.join(","));
+  }
+  return `${META_DIALOG}?${params.toString()}`;
+}
+
+// A system-user token doesn't expire; stored with a far-future expiry like
+// other non-expiring credentials, so it is never refreshed or flagged.
+const NEVER = 100 * 365 * 24 * 60 * 60;
+
+// The business a system-user token was issued to, or null for a person's
+// token (asking a user node for client_business_id is an error).
+export async function metaClientBusiness(accessToken: string): Promise<{ id: string; name: string | null } | null> {
+  try {
+    const me = await graphGet<{ client_business_id?: string }>("/me", {
+      fields: "client_business_id",
+      access_token: accessToken,
+    });
+    if (!me.client_business_id) return null;
+    const business = await graphGet<{ name?: string }>(`/${me.client_business_id}`, {
+      fields: "name",
+      access_token: accessToken,
+    }).catch(() => ({}) as { name?: string });
+    return { id: me.client_business_id, name: business.name ?? null };
+  } catch {
+    return null;
+  }
+}
+
 export const metaOAuth: OAuthProvider = {
   id: "meta",
-  authUrl(state) {
-    const params = new URLSearchParams({
-      client_id: env("META_APP_ID"),
-      redirect_uri: env("META_OAUTH_REDIRECT_URI"),
-      state,
-      scope: SCOPES.join(","),
-      response_type: "code",
-    });
-    return `${META_DIALOG}?${params.toString()}`;
-  },
+  authUrl: (state) => metaDialogUrl(state, SCOPES, "ads"),
 
-  // Exchange the auth code for a short-lived token, then upgrade it to a
-  // long-lived (~60 day) token. Stored as both access + refresh token.
+  // Exchange the auth code. A business configuration hands back the
+  // never-expiring system-user token itself; a plain login hands back a
+  // short-lived user token, upgraded here to a long-lived (~60 day) one and
+  // stored as both access + refresh token.
   async exchangeCode(code): Promise<TokenSet> {
     const short = await graphGet<{ access_token: string }>("/oauth/access_token", {
       client_id: env("META_APP_ID"),
@@ -69,6 +122,9 @@ export const metaOAuth: OAuthProvider = {
       redirect_uri: env("META_OAUTH_REDIRECT_URI"),
       code,
     });
+    if (await metaClientBusiness(short.access_token)) {
+      return { access_token: short.access_token, expires_in: NEVER };
+    }
     const long = await graphGet<{ access_token: string; expires_in?: number }>("/oauth/access_token", {
       grant_type: "fb_exchange_token",
       client_id: env("META_APP_ID"),
@@ -91,7 +147,11 @@ export const metaOAuth: OAuthProvider = {
     return { access_token: long.access_token, refresh_token: long.access_token, expires_in: long.expires_in || SIXTY_DAYS };
   },
 
+  // Who the connection is: the business for a system-user token (its own
+  // "name" is a generated system user), otherwise the person who signed in.
   async identity(accessToken): Promise<string> {
+    const business = await metaClientBusiness(accessToken);
+    if (business) return business.name ? `${business.name} (business)` : "Meta business";
     const me = await graphGet<{ name?: string }>("/me", { fields: "name", access_token: accessToken });
     return me.name ?? "Meta account";
   },
@@ -106,7 +166,8 @@ export const metaOAuth: OAuthProvider = {
   },
 
   // A long-lived Facebook user token can't be extended server-side; the user
-  // must sign in again within its ~60 days.
+  // must sign in again within its ~60 days. (A system-user token is stored
+  // with a far-future expiry, so this never comes due for it.)
   renewal: () => "reconnect",
 
   // Registered in the Meta app's Facebook Login settings.

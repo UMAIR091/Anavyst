@@ -62,7 +62,8 @@ export function tokenState(
   if (status === "revoked") return { state: "reconnect", label: "Reconnect required" };
   if (!tokenExpiresAt) return { state: "no_expiry", label: "No expiry" };
   const ms = new Date(tokenExpiresAt).getTime() - now;
-  if (ms > TEN_YEARS_MS) return { state: "no_expiry", label: "No expiry (API key)" };
+  // API keys, permanent OAuth 1.0a tokens and Meta business system-user tokens.
+  if (ms > TEN_YEARS_MS) return { state: "no_expiry", label: "No expiry" };
   // A token that can't be extended (Facebook Login) needs a fresh sign-in
   // before it expires, so it says by when, and warns as the date nears.
   if (renewal === "reconnect") {

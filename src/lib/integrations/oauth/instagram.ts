@@ -14,7 +14,7 @@
 // Both reach the same IG user node, so the insights code below is shared and
 // only the host differs.
 import type { OAuthProvider, IntegrationAccount } from "../types";
-import { graphGet, metaEnv, metaOAuth, META_DIALOG } from "./meta";
+import { graphGet, metaDialogUrl, metaEnv, metaOAuth } from "./meta";
 import {
   emptySocialTotals, engagementRate,
   type SocialDay, type SocialPost, type SocialProfile, type SocialReport, type SocialTotals,
@@ -109,14 +109,10 @@ export const instagramOAuth: OAuthProvider = {
       });
       return `${IG_AUTHORIZE}?${params.toString()}`;
     }
-    const params = new URLSearchParams({
-      client_id: metaEnv("META_APP_ID"),
-      redirect_uri: metaEnv("META_OAUTH_REDIRECT_URI"),
-      state,
-      scope: SCOPES.join(","),
-      response_type: "code",
-    });
-    return `${META_DIALOG}?${params.toString()}`;
+    // Facebook route: the "Anavyst Instagram reporting" Login for Business
+    // configuration when set (never-expiring business token), else a plain
+    // login with the scopes above. See metaDialogUrl.
+    return metaDialogUrl(state, SCOPES, "instagram");
   },
 
   // Code → short-lived token (1 hour) → long-lived token (60 days).
