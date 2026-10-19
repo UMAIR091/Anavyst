@@ -258,3 +258,80 @@ export function reportEmailHtml(args: ReportEmailArgs): string {
   </body>
 </html>`;
 }
+
+// ── Reconnect reminder ───────────────────────────────────────
+// Anavyst → agency (a platform email, like the welcome email): saved sign-ins
+// that need a fresh sign-in soon, so a report doesn't silently stop updating.
+// Facebook sign-ins last ~60 days and LinkedIn's a year, and neither can be
+// renewed without the person signing in again. Sent by the daily sync cron
+// (lib/integrations/reconnectReminders.ts), at most once per stage.
+export type ReconnectReminderItem = {
+  platform: string;
+  signedInAs: string | null;
+  /** Clients whose reports use this sign-in (names). */
+  clients: string[];
+  deadline: string;
+  stage: "14d" | "3d" | "expired";
+  /** Set when the sign-in is a client's own (connect link): they reconnect it. */
+  clientOwnedBy: string | null;
+  actionUrl: string;
+};
+
+export type ReconnectReminderArgs = { agencyName: string | null; items: ReconnectReminderItem[]; dashboardUrl: string };
+
+export function reconnectReminderEmailHtml(a: ReconnectReminderArgs): string {
+  const color = "#4f46e5";
+  const hi = a.agencyName ? `Hi ${esc(a.agencyName)},` : "Hi,";
+  const anyExpired = a.items.some((i) => i.stage === "expired");
+  const intro = anyExpired
+    ? "One or more of your data connections has expired, so the reports that use it have stopped updating. Reconnect to resume syncing:"
+    : "These data connections need a fresh sign-in soon. The platform doesn't let them renew on their own, so reconnect before the date to keep your clients' reports updating:";
+
+  const clientsText = (names: string[]) =>
+    names.length <= 3 ? names.join(", ") : `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`;
+
+  const rows = a.items
+    .map((i) => {
+      const day = fmtDay(i.deadline) ?? "";
+      const when = i.stage === "expired" ? `Expired on ${esc(day)}` : `Reconnect by ${esc(day)}`;
+      const who = i.signedInAs ? ` · signed in as ${esc(i.signedInAs)}` : "";
+      const used = i.clients.length ? `Used for ${esc(clientsText(i.clients))}` : "";
+      const action = i.clientOwnedBy
+        ? `This is ${esc(i.clientOwnedBy)}'s own sign-in. Send them a new connect link from their Data sources tab.`
+        : "";
+      const button = i.clientOwnedBy ? "Open data sources" : "Reconnect";
+      const url = safeUrl(i.actionUrl) ?? a.dashboardUrl;
+      return `<tr><td style="padding:14px 0;border-top:1px solid #eef1f5;">
+        <p style="margin:0;font-size:15px;font-weight:600;color:#0f172a;">${esc(i.platform)}<span style="font-weight:400;color:#64748b;">${who}</span></p>
+        <p style="margin:4px 0 0;font-size:13px;color:${i.stage === "14d" ? "#334155" : "#b45309"};font-weight:600;">${when}</p>
+        ${used ? `<p style="margin:4px 0 0;font-size:13px;color:#64748b;">${used}</p>` : ""}
+        ${action ? `<p style="margin:4px 0 0;font-size:13px;color:#64748b;">${action}</p>` : ""}
+        <p style="margin:10px 0 0;"><a href="${esc(url)}" style="display:inline-block;padding:9px 18px;border-radius:8px;background:${color};font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">${button}</a></p>
+      </td></tr>`;
+    })
+    .join("");
+
+  return `<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#f4f6f8;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:36px 12px;">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e9edf2;">
+          <tr><td style="background:${color};padding:22px 32px;"><span style="font-size:18px;font-weight:700;color:#ffffff;">Anavyst</span></td></tr>
+          <tr><td style="padding:32px;">
+            <p style="margin:0 0 8px;font-size:15px;color:#0f172a;font-weight:600;">${hi}</p>
+            <p style="margin:0 0 6px;font-size:15px;line-height:1.65;color:#334155;">${intro}</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+            <p style="margin:18px 0 0;font-size:13px;line-height:1.6;color:#64748b;">
+              Reconnecting takes a minute and renews the sign-in for every client that uses it.
+            </p>
+          </td></tr>
+          <tr><td style="padding:18px 32px;border-top:1px solid #eef1f5;">
+            <p style="margin:0;font-size:12px;line-height:1.7;color:#94a3b8;">Anavyst · white-label client reporting on autopilot<br/>Questions? Just reply to this email.</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+}

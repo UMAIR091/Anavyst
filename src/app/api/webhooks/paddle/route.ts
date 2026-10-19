@@ -4,6 +4,7 @@ import type { EventEntity } from "@paddle/paddle-node-sdk";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { planForPrice, planName, getPlan, normalizeInterval, PAID_TRIAL_DAYS, type PlanId } from "@/lib/billing/config";
 import { emailConfigured, sendEmailWithRetry, welcomeEmailHtml } from "@/lib/email";
+import { agencyContact } from "@/lib/agencyContact";
 import {
   verifyWebhook,
   webhookConfigured,
@@ -221,20 +222,6 @@ async function syncSubscription(admin: SupabaseClient, sub: SubscriptionLike): P
   }
 
   return { ok: true };
-}
-
-// The agency's reachable identity: contact email (falling back to the auth
-// owner's address) plus display name. Used for trial grants + welcome email.
-async function agencyContact(admin: SupabaseClient, agencyId: string): Promise<{ email: string | null; name: string | null }> {
-  const { data } = await admin.from("agencies").select("name, contact_email, owner_id").eq("id", agencyId).maybeSingle();
-  const name = (data?.name as string | null) ?? null;
-  const contact = (data?.contact_email as string | null) ?? null;
-  if (contact) return { email: contact, name };
-
-  const ownerId = data?.owner_id as string | undefined;
-  if (!ownerId) return { email: null, name };
-  const { data: userRes } = await admin.auth.admin.getUserById(ownerId);
-  return { email: userRes?.user?.email ?? null, name };
 }
 
 // ── Welcome email ────────────────────────────────────────────

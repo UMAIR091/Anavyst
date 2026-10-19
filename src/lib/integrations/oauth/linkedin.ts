@@ -40,7 +40,15 @@ async function tokenRequest(body: Record<string, string>): Promise<TokenSet> {
   if (!res.ok || !data.access_token) {
     throw new Error(`LinkedIn token request failed: ${data.error_description ?? data.error ?? res.status}`);
   }
-  return { access_token: data.access_token, refresh_token: data.refresh_token, expires_in: data.expires_in ?? 3600 };
+  return {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expires_in: data.expires_in ?? 3600,
+    // A programmatic refresh token lasts a fixed 365 days from the sign-in;
+    // refreshing doesn't extend it, and the member must authorize again after
+    // (learn.microsoft.com/linkedin/shared/authentication/programmatic-refresh-tokens).
+    ...(Number(data.refresh_token_expires_in) > 0 ? { refresh_expires_in: Number(data.refresh_token_expires_in) } : {}),
+  };
 }
 
 export const linkedinOAuth: OAuthProvider = {

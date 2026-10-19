@@ -5,6 +5,7 @@ import { dispatchSyncBatch, dispatchConfig } from "@/lib/syncDispatch";
 import { logRouteError } from "@/lib/errorLog";
 import { reconcileLiveSubscriptions } from "@/lib/billing/reconcile";
 import { purgeStaleAdAttribution } from "@/lib/metaCapi";
+import { sendReconnectReminders } from "@/lib/integrations/reconnectReminders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,6 +33,14 @@ export async function GET(req: Request) {
     // must not leave paid access running (see reconcileLiveSubscriptions).
     const billing = await reconcileLiveSubscriptions(admin).catch(() => ({ checked: 0, changed: 0 }));
 
+    // "Reconnect by" emails for sign-ins that can't renew on their own
+    // (migration 0052). After the sync, so a sign-in just renewed isn't
+    // reminded about. Best-effort: never fails the run.
+    const reminders = await sendReconnectReminders(admin, baseUrl).catch((err) => {
+      console.error(`reconnect reminders failed: ${(err as Error).message}`);
+      return { agencies: 0, reminders: 0, failed: 1 };
+    });
+
     // Heartbeat (uptime monitoring) + best-effort housekeeping.
     // Record what actually happened, not just what was claimed: a worker that
     // never reports back leaves the claim stamped and the sources untouched, so
@@ -45,13 +54,13 @@ export async function GET(req: Request) {
       admin.rpc("record_heartbeat", {
         p_job: "sync",
         p_ok: result.failed === 0,
-        p_detail: `claimed ${result.claimed} synced ${result.synced} failed ${result.failed} · billing checked ${billing.checked} fixed ${billing.changed}`,
+        p_detail: `claimed ${result.claimed} synced ${result.synced} failed ${result.failed} · billing checked ${billing.checked} fixed ${billing.changed} · reminders ${reminders.reminders} to ${reminders.agencies}`,
       }),
       admin.rpc("purge_rate_limits"),
       purgeStaleAdAttribution(admin),
     ]);
 
-    return NextResponse.json({ ok: true, ...dispatchConfig(), ...result, billing });
+    return NextResponse.json({ ok: true, ...dispatchConfig(), ...result, billing, reminders });
   } catch (err) {
     const message = await logRouteError("cron", err);
     return NextResponse.json({ error: message }, { status: 500 });

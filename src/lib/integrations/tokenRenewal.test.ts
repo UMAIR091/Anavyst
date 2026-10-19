@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("next/cache", () => ({ unstable_cache: (fn: unknown) => fn, revalidateTag: () => {} }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({}) }));
 
-import { reconnectDeadline, renewalFor, renewAheadMs, EXTEND_AHEAD_MS, EXPIRY_BUFFER_MS } from "./tokenRenewal";
+import { reconnectDeadline, renewalFor, renewAheadMs, signInDeadline, EXTEND_AHEAD_MS, EXPIRY_BUFFER_MS } from "./tokenRenewal";
 import { tokenState } from "@/lib/integrationHealth";
 
 // Facebook Login tokens can't be extended (re-exchanging returns the same
@@ -31,6 +31,31 @@ describe("renewal per connection", () => {
     expect(reconnectDeadline({ type: "meta_ads", config: {}, token_expires_at: inDays(30) }, NOW)).toBeNull();
     expect(reconnectDeadline({ type: "instagram", config: { identity_provider: "instagram" }, token_expires_at: inDays(5) }, NOW)).toBeNull();
     expect(reconnectDeadline({ type: "gsc", config: {}, token_expires_at: inDays(-1) }, NOW)).toBeNull();
+  });
+});
+
+describe("when a refresh token itself runs out (migration 0052)", () => {
+  it("warns before LinkedIn's fixed year ends, however fresh its access token is", () => {
+    const li = (refreshDays: number | null) => ({
+      type: "linkedin_ads", config: {}, token_expires_at: inDays(50), refresh_expires_at: refreshDays === null ? null : inDays(refreshDays),
+    });
+    expect(signInDeadline(li(300), NOW)).toBe(inDays(300));
+    expect(reconnectDeadline(li(300), NOW)).toBeNull();
+    expect(reconnectDeadline(li(10), NOW)).toBe(inDays(10));
+    expect(reconnectDeadline(li(-2), NOW)).toBe(inDays(-2));
+    // No date from the provider (Google, Microsoft …): nothing to warn about.
+    expect(signInDeadline(li(null), NOW)).toBeNull();
+  });
+
+  it("ignores 'never' sentinels, and keeps Facebook on its own token expiry", () => {
+    expect(signInDeadline({ type: "meta_ads", config: {}, token_expires_at: inDays(36500) }, NOW)).toBeNull();
+    expect(signInDeadline({ type: "meta_ads", config: {}, token_expires_at: inDays(20), refresh_expires_at: inDays(5) }, NOW)).toBe(inDays(20));
+  });
+
+  it("shows it on the health page", () => {
+    expect(tokenState("connected", inDays(50), "refresh", NOW, inDays(10))).toEqual({ state: "expiring", label: "Reconnect by 27 Oct 2026" });
+    expect(tokenState("connected", inDays(50), "refresh", NOW, inDays(-1)).state).toBe("reconnect");
+    expect(tokenState("connected", inDays(50), "refresh", NOW, inDays(200)).state).toBe("auto_refresh");
   });
 });
 

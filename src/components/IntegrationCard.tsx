@@ -242,17 +242,19 @@ export function IntegrationCard({
           <div className="mt-4 flex items-start gap-2 rounded-lg border border-warning-300 bg-warning-50 px-3 py-2.5 text-xs text-warning-800">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <span>
+              {/* Facebook sign-ins last ~60 days; LinkedIn needs a fresh sign-in
+                  once a year. Either way it can't be renewed automatically. */}
               {expired ? (
                 <>
-                  <span className="font-semibold">{descriptor.name} access has expired.</span> Facebook sign-ins can&apos;t
-                  be renewed automatically, so syncing stops until you{" "}
+                  <span className="font-semibold">{descriptor.name} access has expired.</span> It can&apos;t be renewed
+                  automatically, so syncing stops until you{" "}
                 </>
               ) : (
                 <>
                   <span className="font-semibold">
                     {descriptor.name} access ends on {reconnectDay}.
                   </span>{" "}
-                  Facebook sign-ins last about 60 days and can&apos;t be renewed automatically. To keep this
+                  {descriptor.name} needs a fresh sign-in by then; it can&apos;t be renewed automatically. To keep this
                   client&apos;s data syncing,{" "}
                 </>
               )}

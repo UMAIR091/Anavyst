@@ -126,6 +126,20 @@ describe("other tokens are unchanged", () => {
     const dead = source("gsc", -0.01);
     await expect(getValidAccessToken(dead.row as never)).rejects.toThrow("invalid_grant");
   });
+
+  it("saves when the refresh token itself runs out, when the provider says (LinkedIn, Pinterest)", async () => {
+    refresh.mockResolvedValueOnce({ access_token: "fresh", refresh_token: "rt2", expires_in: 3600, refresh_expires_in: 300 * 86400 });
+    const { row, writes } = source("linkedin_ads", -0.01);
+    await getValidAccessToken(row as never);
+    const saved = writes.find((w) => w.access_token)!;
+    expect(saved.refresh_token).toBe("enc:rt2");
+    expect(new Date(saved.refresh_expires_at as string).getTime()).toBeGreaterThan(Date.now() + 299 * DAY);
+
+    refresh.mockResolvedValueOnce({ access_token: "fresh", expires_in: 3600 });
+    const other = source("gsc", -0.01);
+    await getValidAccessToken(other.row as never);
+    expect(other.writes.find((w) => w.access_token)).not.toHaveProperty("refresh_expires_at");
+  });
 });
 
 describe("shared sign-ins", () => {

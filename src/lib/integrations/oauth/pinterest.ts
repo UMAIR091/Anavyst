@@ -54,7 +54,7 @@ async function pinGet<T>(path: string, accessToken: string, params?: Record<stri
   });
 }
 
-type TokenResponse = { access_token?: string; refresh_token?: string; expires_in?: number };
+type TokenResponse = { access_token?: string; refresh_token?: string; expires_in?: number; refresh_token_expires_in?: number };
 
 // POST /oauth/token — Basic-authed, form-encoded. Used for both the initial
 // code exchange and refresh.
@@ -76,6 +76,10 @@ async function tokenRequest(body: Record<string, string>): Promise<TokenSet> {
     access_token: data.access_token,
     refresh_token: data.refresh_token,
     expires_in: data.expires_in ?? 30 * 24 * 60 * 60,
+    // Apps made since 25 Sep 2025 get a refresh token that expires 60 days
+    // after it's issued and is replaced on each refresh (developers.pinterest.com
+    // set-up-authentication-and-authorization).
+    ...(Number(data.refresh_token_expires_in) > 0 ? { refresh_expires_in: Number(data.refresh_token_expires_in) } : {}),
   };
 }
 

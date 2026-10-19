@@ -90,7 +90,7 @@ type DsRow = {
 };
 
 // The saved sign-in a source uses: no tokens, just what the UI shows.
-type SignInRow = { identity_provider: string | null; token_expires_at: string | null };
+type SignInRow = { identity_provider: string | null; token_expires_at: string | null; refresh_expires_at?: string | null };
 const signInOf = (d: DsRow): SignInRow | null => (Array.isArray(d.connection) ? d.connection[0] ?? null : d.connection);
 
 // Anything not healthy leads the list — needs_account / sync_error /
@@ -114,7 +114,7 @@ export async function loadClientWorkspace(
     .from("data_sources")
     .select(
       "id, type, display_name, config, status, last_synced_at, last_sync_error, connection_id, created_at, " +
-        "connection:connections!data_sources_connection_fkey(identity_provider, token_expires_at)"
+        "connection:connections!data_sources_connection_fkey(identity_provider, token_expires_at, refresh_expires_at)"
     )
     .eq("client_id", clientId)
     .order("created_at");
@@ -197,6 +197,7 @@ export async function loadClientWorkspace(
               type: ds.type,
               config: { ...config, identity_provider: signInOf(ds)?.identity_provider ?? config.identity_provider },
               token_expires_at: signInOf(ds)?.token_expires_at ?? null,
+              refresh_expires_at: signInOf(ds)?.refresh_expires_at ?? null,
             })
           : null,
       sharedWith: ds?.connection_id ? sharedClients.get(ds.connection_id)?.size ?? 0 : 0,

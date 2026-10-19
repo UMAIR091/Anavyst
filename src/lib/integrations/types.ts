@@ -3,7 +3,10 @@
 // (OAuth, token refresh, sync, UI) consume the registry so adding a source means
 // writing a descriptor, not new plumbing.
 
-export type TokenSet = { access_token: string; refresh_token?: string; expires_in: number };
+// refresh_expires_in: seconds until the REFRESH token itself stops working,
+// for providers that say (LinkedIn's fixed 365 days, Pinterest's rolling 60).
+// Past it the user must sign in again, however often the token was refreshed.
+export type TokenSet = { access_token: string; refresh_token?: string; expires_in: number; refresh_expires_in?: number };
 
 // Optional per-connection context threaded into token operations so an
 // integration that supports more than one identity provider (e.g. Microsoft Ads

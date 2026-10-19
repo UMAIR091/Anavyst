@@ -57,9 +57,19 @@ export function tokenState(
   status: ConnectionStatus,
   tokenExpiresAt: string | null,
   renewal: TokenRenewal = "refresh",
-  now: number = Date.now()
+  now: number = Date.now(),
+  // When the refresh token itself runs out (migration 0052), if known.
+  refreshExpiresAt: string | null = null
 ): { state: TokenState; label: string } {
   if (status === "revoked") return { state: "reconnect", label: "Reconnect required" };
+  // An auto-refreshing sign-in still needs a fresh sign-in once its refresh
+  // token runs out (LinkedIn's year), so it warns as that date nears.
+  if (renewal !== "reconnect" && refreshExpiresAt) {
+    const left = new Date(refreshExpiresAt).getTime() - now;
+    const day = format(new Date(refreshExpiresAt), "d MMM yyyy");
+    if (!Number.isNaN(left) && left <= 0) return { state: "reconnect", label: "Expired: reconnect" };
+    if (!Number.isNaN(left) && left <= RECONNECT_WARN_MS) return { state: "expiring", label: `Reconnect by ${day}` };
+  }
   if (!tokenExpiresAt) return { state: "no_expiry", label: "No expiry" };
   const ms = new Date(tokenExpiresAt).getTime() - now;
   // API keys, permanent OAuth 1.0a tokens and Meta business system-user tokens.
@@ -93,7 +103,7 @@ type Row = {
   // The saved sign-in the source uses (migration 0046): its expiry and route.
   connection: SignIn | SignIn[] | null;
 };
-type SignIn = { identity_provider: string | null; token_expires_at: string | null };
+type SignIn = { identity_provider: string | null; token_expires_at: string | null; refresh_expires_at?: string | null };
 
 function clientName(row: Row): string {
   const c = row.clients;
@@ -121,7 +131,7 @@ export async function getIntegrationHealth(supabase: SupabaseClient, agencyId: s
     .from("data_sources")
     .select(
       "id, type, client_id, display_name, status, last_synced_at, last_sync_failed_at, last_sync_error, config, clients(name), " +
-        "connection:connections!data_sources_connection_fkey(identity_provider, token_expires_at)"
+        "connection:connections!data_sources_connection_fkey(identity_provider, token_expires_at, refresh_expires_at)"
     )
     .eq("agency_id", agencyId)
     .order("last_sync_attempt_at", { ascending: false, nullsFirst: false });
@@ -145,7 +155,7 @@ export async function getIntegrationHealth(supabase: SupabaseClient, agencyId: s
       lastSyncFailedAt: r.last_sync_failed_at,
       lastSyncError: r.last_sync_error,
       tokenExpiresAt,
-      token: tokenState(status, tokenExpiresAt, renewalFor({ type: r.type, config })),
+      token: tokenState(status, tokenExpiresAt, renewalFor({ type: r.type, config }), Date.now(), signIn?.refresh_expires_at ?? null),
       selectedAccountId,
       // The one classification every screen reads (P0-1).
       health: sourceHealth({ status, lastSyncError: r.last_sync_error, selectedAccountId }),

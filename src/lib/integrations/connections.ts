@@ -37,10 +37,12 @@ export type ConnectionTokens = {
   // Who signed in, hashed (migration 0049). Null on a sign-in saved before
   // it was recorded; the next successful sync fills it in.
   subject_hash?: string | null;
+  // When the refresh token itself runs out, if the provider said (0052).
+  refresh_expires_at?: string | null;
 };
 
 const CONNECTION_TOKEN_FIELDS =
-  "id, agency_id, type, client_id, identity_provider, subject_hash, access_token, refresh_token, token_expires_at, status";
+  "id, agency_id, type, client_id, identity_provider, subject_hash, access_token, refresh_token, token_expires_at, refresh_expires_at, status";
 
 // Everything sync and token refresh need about a source, with its sign-in.
 // Service role only: the joined token columns aren't readable by tenants.
@@ -363,6 +365,8 @@ export type SignInTokens = {
   accessToken: string;
   refreshToken?: string | null;
   expiresAt: string;
+  // When the refresh token itself runs out (LinkedIn, Pinterest), if known.
+  refreshExpiresAt?: string | null;
 };
 
 export type SaveSignInResult = {
@@ -415,6 +419,8 @@ export async function saveSignIn(
     access_token: encrypt(args.tokens.accessToken),
     refresh_token: args.tokens.refreshToken ? encrypt(args.tokens.refreshToken) : null,
     token_expires_at: args.tokens.expiresAt,
+    // A new authorization starts a new refresh-token lifetime.
+    refresh_expires_at: args.tokens.refreshExpiresAt ?? null,
   };
   const signIn = {
     identity_provider: args.identityProvider ?? null,

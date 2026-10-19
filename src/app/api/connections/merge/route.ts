@@ -105,7 +105,7 @@ export async function POST(req: Request) {
 
       const { data: raw } = await admin
         .from("connections")
-        .select("access_token, refresh_token, token_expires_at")
+        .select("access_token, refresh_token, token_expires_at, refresh_expires_at")
         .eq("id", from.id)
         .eq("agency_id", agencyId)
         .single();

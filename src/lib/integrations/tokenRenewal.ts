@@ -27,14 +27,30 @@ export function renewAheadMs(conn: Connection): number {
   return renewalFor(conn) === "extend" ? EXTEND_AHEAD_MS : EXPIRY_BUFFER_MS;
 }
 
-// For a token that can't be extended, the date the user must reconnect by, once
-// it is within the warning window (or already past). Null when nothing is due.
-export function reconnectDeadline(
-  conn: Connection & { token_expires_at?: string | null },
-  now: number = Date.now()
-): string | null {
-  if (!conn.token_expires_at || renewalFor(conn) !== "reconnect") return null;
-  const expires = new Date(conn.token_expires_at).getTime();
-  if (Number.isNaN(expires)) return null;
-  return expires - now <= RECONNECT_WARN_MS ? conn.token_expires_at : null;
+export type SignInDates = Connection & { token_expires_at?: string | null; refresh_expires_at?: string | null };
+
+// Expiries this far out are sentinels for "never" (API keys, OAuth 1.0a,
+// Meta business system-user tokens), not dates anyone has to act on.
+const NO_REAL_EXPIRY_MS = 10 * 365 * DAY_MS;
+
+// The date a sign-in must be signed in to again by, whatever forces it: a token
+// that can't be extended (Facebook Login) at its own expiry; any other when its
+// refresh token runs out, where the provider says when (LinkedIn's fixed year,
+// Pinterest's rolling 60 days; migration 0052). Null when nothing forces a
+// fresh sign-in.
+export function signInDeadline(conn: SignInDates, now: number = Date.now()): string | null {
+  const real = (iso: string | null | undefined) => {
+    if (!iso) return null;
+    const at = new Date(iso).getTime();
+    return Number.isNaN(at) || at - now >= NO_REAL_EXPIRY_MS ? null : iso;
+  };
+  return renewalFor(conn) === "reconnect" ? real(conn.token_expires_at) : real(conn.refresh_expires_at);
+}
+
+// The date the user must reconnect by, once it is within the warning window
+// (or already past). Null when nothing is due yet.
+export function reconnectDeadline(conn: SignInDates, now: number = Date.now()): string | null {
+  const deadline = signInDeadline(conn, now);
+  if (!deadline) return null;
+  return new Date(deadline).getTime() - now <= RECONNECT_WARN_MS ? deadline : null;
 }

@@ -5,7 +5,10 @@ import { resendProvider } from "./resend";
 import type { EmailProvider, SendEmailArgs, SendResult } from "./types";
 
 export type { EmailAttachment, SendEmailArgs, DnsRecord, SendingDomain, DomainStatus, EmailProvider } from "./types";
-export { reportEmailHtml, welcomeEmailHtml, invitationEmailHtml, type ReportEmailArgs, type WelcomeEmailArgs, type InvitationEmailArgs } from "./template";
+export {
+  reportEmailHtml, welcomeEmailHtml, invitationEmailHtml, reconnectReminderEmailHtml,
+  type ReportEmailArgs, type WelcomeEmailArgs, type InvitationEmailArgs, type ReconnectReminderArgs, type ReconnectReminderItem,
+} from "./template";
 export { resolveSender, domainOfEmail, isReservedSendingDomain, type ResolvedSender } from "./sender";
 
 // Provider registry. EMAIL_PROVIDER selects the backend; Resend is the only

@@ -166,6 +166,11 @@ export async function getValidAccessToken(ds: DataSourceRow): Promise<string> {
           token_locked_until: null,
         };
         if (refreshed.refresh_token) update.refresh_token = encrypt(refreshed.refresh_token);
+        // The refresh token's own end date, when the provider sends it (0052).
+        const refreshExpiresIn = (refreshed as { refresh_expires_in?: number }).refresh_expires_in;
+        if (refreshExpiresIn) {
+          update.refresh_expires_at = new Date(Date.now() + refreshExpiresIn * 1000).toISOString();
+        }
         await h.db.from(h.table).update(update).eq("id", h.id);
 
         return refreshed.access_token;

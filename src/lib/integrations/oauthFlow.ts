@@ -401,7 +401,12 @@ export async function completeOAuthConnect(
     agencyId,
     clientId,
     def,
-    tokens: { accessToken, refreshToken: tokens.refresh_token, expiresAt },
+    tokens: {
+      accessToken,
+      refreshToken: tokens.refresh_token,
+      expiresAt,
+      refreshExpiresAt: tokens.refresh_expires_in ? new Date(Date.now() + tokens.refresh_expires_in * 1000).toISOString() : null,
+    },
     identity,
     identityProvider: provider,
     config,
