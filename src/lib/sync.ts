@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getValidAccessToken } from "@/lib/googleTokens";
-import { getIntegration } from "@/lib/integrations/registry";
+import { getIntegration, oauthForType } from "@/lib/integrations/registry";
 import { classifyIntegrationError, reconnectMessage } from "@/lib/integrations/errors";
 import { logError } from "@/lib/errorLog";
 import { trackUsage } from "@/lib/usage";
@@ -8,7 +8,8 @@ import { recordDailyMetrics } from "@/lib/metrics/history";
 import { CACHED_PERIOD_DAYS } from "@/lib/reports/periods";
 import { ARCHIVED_CLIENT_ERROR, isSourceClientPaused } from "@/lib/archivedClients";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { ConnectionTokens } from "@/lib/integrations/connections";
+import { noAccessMessage, subjectHash, type ConnectionTokens } from "@/lib/integrations/connections";
+import crypto from "node:crypto";
 
 // Periods we keep warm in the cache (match the report/analytics date ranges).
 // Declared once in lib/reports/periods so the client Performance view, which
@@ -85,23 +86,40 @@ export async function syncDataSource(
     return { ok: false, error };
   }
 
+  // The sign-in must belong to this source's workspace and platform, and a
+  // client's own sign-in (connect link) to this client. The database enforces
+  // all three (migrations 0046 and 0048); this refuses a mismatched pairing
+  // rather than fetch with someone else's access, whatever loaded it.
+  const mismatch = signInMismatch(ds);
+  if (mismatch) {
+    const error = "This source's sign-in doesn't belong to it. Reconnect the source.";
+    await supabase
+      .from("data_sources")
+      .update({ status: "error", last_sync_error: error, last_sync_attempt_at: attemptedAt, last_sync_failed_at: attemptedAt })
+      .eq("id", ds.id);
+    await logError({ context: "sync", agencyId: ds.agency_id, dataSourceId: ds.id, provider: ds.type ?? null, errorType: "config", message: mismatch, retryStatus: "needs_reconnect" });
+    return { ok: false, error };
+  }
+
   // A real sync execution is about to run (past the config-gap early returns).
   await trackUsage(ds.agency_id, "sync_executions");
 
-  try {
-    const accessToken = await getValidAccessToken(ds);
-    const now = new Date().toISOString();
+  // Identity provider stored at connect time (e.g. microsoft | google), passed
+  // through so the backend can add any provider-specific API headers.
+  const provider =
+    ds.connection?.identity_provider ??
+    (typeof ds.config?.identity_provider === "string" ? ds.config.identity_provider : undefined);
+  let accessToken: string | null = null;
 
-    // Identity provider stored at connect time (e.g. microsoft | google), passed
-    // through so the backend can add any provider-specific API headers.
-    const provider =
-      ds.connection?.identity_provider ??
-      (typeof ds.config?.identity_provider === "string" ? ds.config.identity_provider : undefined);
+  try {
+    accessToken = await getValidAccessToken(ds);
+    const token = accessToken;
+    const now = new Date().toISOString();
 
     // Widest window first, so the archive write below sees the most history.
     let widest: unknown = null;
     for (const period of PERIODS) {
-      const data = await def.fetchSnapshot(accessToken, accountId, period, { provider }, ds.config ?? {});
+      const data = await def.fetchSnapshot(token, accountId, period, { provider }, ds.config ?? {});
       await supabase
         .from(def.snapshotTable)
         .upsert(
@@ -137,6 +155,9 @@ export async function syncDataSource(
     if (ds.connection && ds.connection.status === "revoked") {
       await createAdminClient().from("connections").update({ status: "connected" }).eq("id", ds.connection.id);
     }
+    // A sign-in saved before who-signed-in was recorded (0049) learns it now,
+    // once, so the same login can be recognised later.
+    if (ds.connection && ds.connection.subject_hash === null) await recordSubject(ds, def, token, provider);
 
     return { ok: true };
   } catch (err) {
@@ -146,6 +167,34 @@ export async function syncDataSource(
     // the source to "revoked" and surfaces a Reconnect prompt; transient errors
     // stay "error" and keep the existing tokens for the next attempt.
     const kind = classifyIntegrationError(err);
+
+    // A shared sign-in serves many accounts. When the provider refuses this
+    // one account (Meta wraps a missing ad-account permission in the same
+    // OAuthException as a dead token), expiring the sign-in would stop every
+    // other client on it. So before treating it as expired, check whether the
+    // sign-in itself still works by listing its accounts.
+    if (kind === "reauth" && accessToken && def.listAccounts) {
+      const reach = await accountReach(def, accessToken, accountId, provider);
+      if (reach !== "token_dead") {
+        const name = def.readAccounts?.(ds.config ?? {}).find((a) => a.id === accountId)?.name ?? accountId;
+        const error = reach === "not_listed" ? noAccessMessage(def, name, null) : `${def.name} refused access to “${name}”: ${message}`;
+        await supabase
+          .from("data_sources")
+          .update({ status: "error", last_sync_error: error, last_sync_attempt_at: attemptedAt, last_sync_failed_at: attemptedAt })
+          .eq("id", ds.id);
+        await logError({
+          context: "sync",
+          agencyId: ds.agency_id,
+          dataSourceId: ds.id,
+          provider: ds.type ?? null,
+          errorType: "transient",
+          message: `account-level refusal, sign-in still valid: ${message}`,
+          retryStatus: "will_retry",
+        });
+        return { ok: false, error };
+      }
+    }
+
     const patch =
       kind === "reauth"
         ? { status: "revoked", last_sync_error: reconnectMessage(def.name), last_sync_attempt_at: attemptedAt, last_sync_failed_at: attemptedAt }
@@ -179,5 +228,54 @@ export async function syncDataSource(
       retryStatus: kind === "reauth" ? "needs_reconnect" : "will_retry",
     });
     return { ok: false, error: message };
+  }
+}
+
+// Why a source's sign-in can't be used for it, or null when it can.
+export function signInMismatch(ds: SyncableSource): string | null {
+  const c = ds.connection;
+  if (!c) return null;
+  if (c.agency_id && c.agency_id !== ds.agency_id) return `sign-in ${c.id} is another workspace's`;
+  if (c.type && ds.type && c.type !== ds.type) return `sign-in ${c.id} is for ${c.type}, not ${ds.type}`;
+  if (c.client_id && ds.client_id && c.client_id !== ds.client_id) return `sign-in ${c.id} belongs to another client`;
+  return null;
+}
+
+// After an auth-looking failure: does the sign-in still work, and does it
+// still list this account? Listing fails the same way only when the token
+// itself is dead.
+export async function accountReach(
+  def: { listAccounts?: (token: string, ctx?: { provider?: string; connectValue?: string }) => Promise<{ id: string }[]> },
+  accessToken: string,
+  accountId: string,
+  provider?: string
+): Promise<"listed" | "not_listed" | "token_dead"> {
+  if (!def.listAccounts) return "token_dead";
+  try {
+    const accounts = await def.listAccounts(accessToken, { provider, connectValue: accountId });
+    return accounts.some((a) => a.id === accountId) ? "listed" : "not_listed";
+  } catch (err) {
+    return classifyIntegrationError(err) === "reauth" ? "token_dead" : "listed";
+  }
+}
+
+// Best-effort: the provider's stable id for the login (an API key's own hash
+// for key-based integrations), stored only if still unrecorded.
+async function recordSubject(
+  ds: SyncableSource,
+  def: { id: string; authKind?: string },
+  token: string,
+  provider: string | undefined
+): Promise<void> {
+  try {
+    const subject =
+      def.authKind === "apikey"
+        ? `key:${crypto.createHash("sha256").update(token).digest("hex")}`
+        : await oauthForType(ds.type)?.subject?.(token, { provider });
+    const hash = subjectHash(def.id, subject ?? null);
+    if (!hash || !ds.connection) return;
+    await createAdminClient().from("connections").update({ subject_hash: hash }).eq("id", ds.connection.id).is("subject_hash", null);
+  } catch {
+    // Recorded on a later sync instead.
   }
 }

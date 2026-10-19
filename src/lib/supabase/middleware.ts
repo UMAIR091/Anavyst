@@ -55,8 +55,11 @@ function canonicalHost(): string | null {
 // Vercel Cron invokes functions on the deployment's own *.vercel.app URL and
 // Paddle posts webhooks to a fixed URL — neither is guaranteed to follow a 308,
 // and a redirected POST can lose its signed body. Uptime checks stay on
-// whichever host they were configured with.
-const CANONICAL_EXEMPT = ["/api/cron", "/api/webhooks", "/api/health", "/monitoring"];
+// whichever host they were configured with. Meta's deauthorize and data
+// deletion callbacks are signed POSTs too.
+const CANONICAL_EXEMPT = [
+  "/api/cron", "/api/webhooks", "/api/health", "/monitoring", "/api/meta/deauthorize", "/api/meta/data-deletion",
+];
 
 function buildCsp(nonce: string, strict: boolean): string {
   const supabaseOrigin = (() => {

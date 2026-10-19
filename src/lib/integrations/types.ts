@@ -26,6 +26,13 @@ export type OAuthProvider = {
   exchangeCode(code: string, ctx?: AuthContext): Promise<TokenSet>;
   refresh(refreshToken: string, ctx?: AuthContext): Promise<TokenSet>;
   identity(accessToken: string, ctx?: AuthContext): Promise<string>;
+  // The provider's STABLE id for who signed in (a Google account id, a
+  // Facebook user id or business id, a HubSpot portal + user …), never a name
+  // or email. Lets the same login signed in twice be recognised, and stops a
+  // shared sign-in being renewed with someone else's login. Null when the
+  // provider gives none or the call fails; omitted when not implemented.
+  // Either way nothing is ever matched on display name alone.
+  subject?(accessToken: string, ctx?: AuthContext): Promise<string | null>;
   // Best-effort revocation of the grant at the provider on disconnect. Optional:
   // only providers with an official revoke endpoint implement it. Never blocks
   // disconnect — callers treat a thrown error as non-fatal.

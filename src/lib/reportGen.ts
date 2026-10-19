@@ -18,6 +18,16 @@ import { fetchHistory, extractDailySeries } from "@/lib/metrics/history";
 import { inferReportType, isReportType, suggestReportTitle, type ReportType } from "@/lib/reports/types";
 import { hasCalculableKpis } from "@/lib/reports/summary";
 import { assembleReport, isGscEmpty, isGa4Empty, isReportEmpty, dataCoverage, periodLabel, insightsPeriodPhrase, toInsightsInput, type ReportData } from "@/lib/report";
+import { getIntegration } from "@/lib/integrations/registry";
+
+// The account a source reports on, by name, to tell two accounts of one
+// platform apart in a report.
+function accountLabel(type: string, config: unknown): string {
+  const def = getIntegration(type);
+  const cfg = (config ?? {}) as Record<string, unknown>;
+  const id = def?.readSelected?.(cfg) ?? null;
+  return (id && def?.readAccounts?.(cfg).find((a) => a.id === id)?.name) || id || "account";
+}
 
 /**
  * Bridges the legacy `periodDays` argument and the period presets.
@@ -145,7 +155,13 @@ export async function createClientReport(
   // Each block stays paired with the data source it came from, so its archive
   // history is looked up by that source rather than by platform: two accounts
   // on one platform must never share a series.
-  type Channel = { dsId: string; type: string; status: string | null; syncedAt: string | null; snapshot: unknown; block: ReportBlock | null };
+  // A client can have two accounts of one platform (migration 0049). Their
+  // blocks are then told apart (instanceId) and named by account; with one
+  // account per platform nothing about a block changes.
+  type Channel = {
+    dsId: string; type: string; status: string | null; syncedAt: string | null; snapshot: unknown;
+    block: ReportBlock | null; label: string | null;
+  };
   let channels: Channel[] = [];
   if (otherSources.length) {
     const { data: snaps } = await supabase
@@ -154,9 +170,15 @@ export async function createClientReport(
       .in("data_source_id", otherSources.map((s) => s.id))
       .eq("period_days", snapshotDays);
     const byId = new Map((snaps ?? []).map((r) => [r.data_source_id as string, r as SnapRow]));
+    const perType = new Map<string, number>();
+    for (const s of otherSources) perType.set(s.type as string, (perType.get(s.type as string) ?? 0) + 1);
     channels = otherSources.map((src) => {
       const row = byId.get(src.id as string);
-      const block = snapshotToBlock(src.type as string, row?.data);
+      const projected = snapshotToBlock(src.type as string, row?.data);
+      const label = (perType.get(src.type as string) ?? 0) > 1 ? accountLabel(src.type as string, src.config) : null;
+      const block = projected && label
+        ? { ...projected, instanceId: src.id as string, sourceName: `${projected.sourceName} · ${label}` }
+        : projected;
       return {
         dsId: src.id as string,
         type: src.type as string,
@@ -164,9 +186,13 @@ export async function createClientReport(
         syncedAt: row?.synced_at ?? null,
         snapshot: row?.data ?? null,
         block: block && (block.kpis.length > 0 || block.tables.length > 0) ? block : null,
+        label,
       };
     });
   }
+  // Source notes ("Meta Ads is not included …") name the account too.
+  const named = <T extends { name: string }>(st: T, label: string | null): T =>
+    label ? { ...st, name: `${st.name} · ${label}` } : st;
   const blocksOf = (list: Channel[]) => orderBlocks(list.map((c) => c.block).filter((b): b is ReportBlock => b !== null));
   let blocks = blocksOf(channels);
 
@@ -185,15 +211,20 @@ export async function createClientReport(
   // October "Last 28 days". A snapshot whose data ends more than a few days
   // before the period does is excluded and named instead.
   if (!derived) {
-    const judge = (type: string, connection: string | null, snap: SnapRow | null | undefined, hasData: boolean) => {
-      const st = assessSnapshotSource({ type, connection, syncedAt: snap?.synced_at, snapshot: snap?.data, periodDays: snapshotDays, period });
+    const judge = (type: string, connection: string | null, snap: SnapRow | null | undefined, hasData: boolean, label: string | null = null) => {
+      const st = named(
+        assessSnapshotSource({ type, connection, syncedAt: snap?.synced_at, snapshot: snap?.data, periodDays: snapshotDays, period }),
+        label
+      );
       if (st.included && !hasData) Object.assign(st, { included: false, state: "no_data", window: null });
       sourceStatus.push(st);
       return st.included;
     };
     if (gscReady && gscDs && !judge("gsc", (gscDs.status as string | null) ?? null, gscSnap, !!gscData)) gscData = null;
     if (ga4Ready && ga4Ds && !judge("ga4", (ga4Ds.status as string | null) ?? null, ga4Snap, !!ga4Data)) ga4Data = null;
-    channels = channels.filter((c) => judge(c.type, c.status, c.snapshot ? { data: c.snapshot, synced_at: c.syncedAt } : null, !!c.block));
+    channels = channels.filter((c) =>
+      judge(c.type, c.status, c.snapshot ? { data: c.snapshot, synced_at: c.syncedAt } : null, !!c.block, c.label)
+    );
     blocks = blocksOf(channels);
 
     if (isReportEmpty({ gsc: gscData, ga4: ga4Data, blocks })) {
@@ -343,7 +374,7 @@ export async function createClientReport(
     const rebuilt: ReportBlock[] = [];
     for (const c of channels) {
       const dates = c.block ? blockDates(c.block) : [];
-      const st = assessDerivedSource({ type: c.type, connection: c.status, syncedAt: c.syncedAt, dates, period });
+      const st = named(assessDerivedSource({ type: c.type, connection: c.status, syncedAt: c.syncedAt, dates, period }), c.label);
       sourceStatus.push(st);
       if (!st.included || !c.block) continue;
       const r = deriveBlock(c.block, period, comparisonWindows(dates, period, prev));
@@ -401,10 +432,13 @@ export async function createClientReport(
   // calculable". A block like that contributed no figure, so it names nothing.
   const blockContributed = (b: ReportBlock) =>
     hasCalculableKpis(b.kpis) || b.tables.some((tbl) => tbl.rows.length > 0);
+  // Platforms, once each, however many accounts of one contributed.
   const contributing = [
-    ...(gscData ? ["gsc"] : []),
-    ...(ga4Data ? ["ga4"] : []),
-    ...blocks.filter(blockContributed).map((b) => b.sourceId).filter((id): id is string => Boolean(id)),
+    ...new Set([
+      ...(gscData ? ["gsc"] : []),
+      ...(ga4Data ? ["ga4"] : []),
+      ...blocks.filter(blockContributed).map((b) => b.sourceId).filter((id): id is string => Boolean(id)),
+    ]),
   ];
   const reportType = isReportType(opts.reportType) ? opts.reportType : inferReportType(contributing);
   const meta = {

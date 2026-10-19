@@ -182,6 +182,19 @@ export const metaOAuth: OAuthProvider = {
     return me.name ?? "Meta account";
   },
 
+  // A system-user token stands for the client's business; a person's token
+  // for that person (an app-scoped user id).
+  async subject(accessToken): Promise<string | null> {
+    try {
+      const business = await metaClientBusiness(accessToken);
+      if (business) return `meta-business:${business.id}`;
+      const me = await graphGet<{ id?: string }>("/me", { fields: "id", access_token: accessToken });
+      return me.id ? `meta-user:${me.id}` : null;
+    } catch {
+      return null;
+    }
+  },
+
   // De-authorizes the app for this user (removes all granted permissions).
   // Best-effort — disconnect proceeds even if this fails.
   async revoke({ accessToken }): Promise<void> {

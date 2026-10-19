@@ -43,6 +43,15 @@ export function shopifyAuthUrl(shop: string, state: string, redirectUri: string)
 
 // Shopify signs callback query strings with the app secret (hmac param over
 // the remaining params, sorted). Constant-time comparison.
+// Webhooks are signed differently from the install redirect: a base64
+// HMAC-SHA256 of the raw request body, in X-Shopify-Hmac-Sha256.
+export function verifyShopifyWebhook(rawBody: string, hmacHeader: string | null): boolean {
+  if (!hmacHeader || !process.env.SHOPIFY_API_SECRET) return false;
+  const digest = crypto.createHmac("sha256", process.env.SHOPIFY_API_SECRET).update(rawBody, "utf8").digest();
+  const given = Buffer.from(hmacHeader, "base64");
+  return given.length === digest.length && crypto.timingSafeEqual(given, digest);
+}
+
 export function verifyShopifyHmac(searchParams: URLSearchParams): boolean {
   const hmac = searchParams.get("hmac");
   if (!hmac) return false;

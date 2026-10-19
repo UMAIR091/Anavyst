@@ -138,6 +138,15 @@ export const tiktokOAuth: OAuthProvider = {
       return "TikTok account";
     }
   },
+
+  async subject(accessToken) {
+    try {
+      const { data } = await ttRequest<{ core_user_id?: string }>("/user/info/", accessToken);
+      return data.core_user_id ? `tiktok:${data.core_user_id}` : null;
+    } catch {
+      return null;
+    }
+  },
   callbackPath: "/api/tiktok/callback",
 };
 

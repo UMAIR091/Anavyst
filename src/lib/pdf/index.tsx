@@ -26,7 +26,7 @@ import { agencyNote, cleanBullets, cleanCommentary } from "@/lib/reports/comment
 import { badgeRepeatsTitle, coverBadgeLabel } from "@/lib/reports/types";
 import { assessComposition, MAX_CHANNEL_KPIS, MIN_BREAKDOWN_ROWS, MIN_DAYS_FOR_PROJECTION, MIN_TREND_POINTS, shortPeriodNote } from "@/lib/reports/composition";
 import { performanceScore, bestChannel, biggestOpportunity, biggestRisk, toInsightCard, buildForecast } from "./analysis";
-import type { BlockFormat, ReportBlock } from "@/lib/integrations/blocks";
+import { blockKey, type BlockFormat, type ReportBlock } from "@/lib/integrations/blocks";
 
 export type { Branding };
 
@@ -118,7 +118,7 @@ function ChannelSection({ s, color, palette, block, sectionNum }: {
                 hint={block.sourceName}
               >
                 <LineChart
-                  id={`${block.sourceId}-${i}`}
+                  id={`${blockKey(block)}-${i}`}
                   values={ser.points.map((p) => p.value)}
                   dates={ser.points.map((p) => p.date)}
                   color={i === 0 ? color : palette[(i + 1) % palette.length]}
@@ -442,7 +442,7 @@ function ReportPdfDoc({ data, branding, logoSrc, clientLogoSrc, clientName, titl
   // Heaviest channel first, so the one carrying the most data leads instead of
   // every channel getting equal billing in connection order.
   const orderedChannelBlocks = composition.channels
-    .map((c) => channelBlocks.find((b) => b.sourceId === c.sourceId))
+    .map((c) => channelBlocks.find((b) => blockKey(b) === c.key))
     .filter((b): b is ReportBlock => !!b);
   // A channel only shares the dashboard page when it has too little to fill
   // one of its own AND that page exists — an ads-only report has no dashboard
@@ -475,7 +475,7 @@ function ReportPdfDoc({ data, branding, logoSrc, clientLogoSrc, clientName, titl
   // enough content still leads its own page, and nothing is dropped either way.
   const channelPages: ReportBlock[][] = [];
   for (const b of mergeChannel ? [] : orderedChannelBlocks) {
-    const standalone = composition.channels.find((c) => c.sourceId === b.sourceId)?.standalone ?? true;
+    const standalone = composition.channels.find((c) => c.key === blockKey(b))?.standalone ?? true;
     if (channelPages.length === 0 || standalone) channelPages.push([b]);
     else channelPages[channelPages.length - 1].push(b);
   }
@@ -799,11 +799,11 @@ function ReportPdfDoc({ data, branding, logoSrc, clientLogoSrc, clientName, titl
           Provider-agnostic: each block renders itself from its own labels,
           formats and currency, so new integrations need no change here. */}
       {channelPages.map((group, i) => (
-        <Page key={group[0].sourceId} size="A4" style={s.page}>
+        <Page key={blockKey(group[0])} size="A4" style={s.page}>
           <PageChrome {...chrome} />
           {i === 0 && summaryOnChannelPage ? renderStandaloneSummary() : null}
           {group.map((block) => (
-            <ChannelSection key={block.sourceId} s={s} color={color} palette={palette} block={block} sectionNum={num()} />
+            <ChannelSection key={blockKey(block)} s={s} color={color} palette={palette} block={block} sectionNum={num()} />
           ))}
         </Page>
       ))}

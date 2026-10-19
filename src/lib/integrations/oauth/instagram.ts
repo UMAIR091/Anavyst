@@ -158,6 +158,17 @@ export const instagramOAuth: OAuthProvider = {
     return me.username ? `@${me.username}` : me.name || "Instagram account";
   },
 
+  async subject(accessToken, ctx) {
+    if (!viaInstagram(ctx?.provider)) return metaOAuth.subject!(accessToken);
+    try {
+      const me = await igGet<{ user_id?: string | number; id?: string }>("/me", { fields: "user_id", access_token: accessToken });
+      const id = me.user_id ?? me.id;
+      return id ? `instagram:${id}` : null;
+    } catch {
+      return null;
+    }
+  },
+
   renewal: (ctx) => (viaInstagram(ctx?.provider) ? "extend" : "reconnect"),
 
   callbackPath: "/api/meta/callback",

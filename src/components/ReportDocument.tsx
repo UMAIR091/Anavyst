@@ -2,7 +2,7 @@
 
 import { normalizeReportData, periodDayCount } from "@/lib/report";
 import { ga4Has, sourceNotes } from "@/lib/reports/dataQuality";
-import { formatBlockValue, type BlockKpi } from "@/lib/integrations/blocks";
+import { blockKey, formatBlockValue, type BlockKpi } from "@/lib/integrations/blocks";
 import { detectSignals } from "@/lib/insights/signals";
 import { allSoWhat, allActions, NO_EVIDENCE_NOTE } from "@/lib/reports/soWhat";
 import { buildExecutiveSummary, blockHasComparison, hasCalculableKpis, periodSubtitle } from "@/lib/reports/summary";
@@ -636,7 +636,7 @@ export function ReportDocument({
         {/* Connected channels — provider-agnostic, one section per integration */}
         {channelBlocks.map((block) => (
           <Section
-            key={block.sourceId}
+            key={blockKey(block)}
             n={next()}
             title={block.sourceName}
             subtitle={periodSubtitle("Performance during this period", blockHasComparison(block))}

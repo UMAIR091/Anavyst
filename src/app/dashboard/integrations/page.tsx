@@ -11,7 +11,6 @@ import type { DataSourceCardData } from "@/components/DataSourceCard";
 import { listIntegrations, isConnectable } from "@/lib/integrations/registry";
 import { getIntegrationName } from "@/lib/integrations/names";
 import { sourceHealth, countHealth } from "@/lib/integrations/status";
-import { HowToVideo } from "@/components/HowToVideo";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +51,9 @@ export default async function IntegrationsPage() {
   const connectHref =
     clients.length === 0 ? "/dashboard/clients/new" : clients.length === 1 ? `/dashboard/clients/${clients[0].id}` : "/dashboard/clients";
 
-  const connectedCount = (typeId: string) => sources.filter((s) => s.type === typeId).length;
+  // Clients, not sources: a client can connect several accounts of one
+  // platform (migration 0049).
+  const connectedCount = (typeId: string) => new Set(sources.filter((s) => s.type === typeId).map((s) => s.client_id)).size;
 
   // ── Available: only what a user can genuinely start connecting today. ──
   // isConnectable, not effectiveStatus, so this list can never offer a Connect
@@ -126,12 +127,9 @@ export default async function IntegrationsPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-[clamp(24px,3vw,28px)] font-semibold tracking-[-0.03em] text-ink-900">Integrations</h1>
-          <p className="mt-1 text-[14.5px] text-ink-500">Every data source connected across your clients, and what you can add next.</p>
-        </div>
-        <HowToVideo />
+      <div>
+        <h1 className="text-[clamp(24px,3vw,28px)] font-semibold tracking-[-0.03em] text-ink-900">Integrations</h1>
+        <p className="mt-1 text-[14.5px] text-ink-500">Every data source connected across your clients, and what you can add next.</p>
       </div>
 
       {accountRows.length > 0 && (

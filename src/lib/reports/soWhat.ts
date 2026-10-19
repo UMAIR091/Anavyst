@@ -20,7 +20,7 @@
 // its position in a list.
 import type { Signal, Confidence } from "@/lib/insights/signals";
 import type { BlockKpi, ReportBlock } from "@/lib/integrations/blocks";
-import { formatBlockValue } from "@/lib/integrations/blocks";
+import { blockKey, formatBlockValue } from "@/lib/integrations/blocks";
 
 export type Priority = "High" | "Medium" | "Low";
 
@@ -240,7 +240,7 @@ export function blockActions(blocks: ReportBlock[]): RecommendedAction[] {
   // step to one, on the account where it matters most.
   const heaviestPaidId = blocks
     .filter((b) => b.category === "paid")
-    .map((b) => ({ id: b.sourceId, spend: val(kpiOf(b, "Spend")) ?? 0 }))
+    .map((b) => ({ id: blockKey(b), spend: val(kpiOf(b, "Spend")) ?? 0 }))
     .sort((a, z) => z.spend - a.spend)[0]?.id;
 
   for (const b of blocks) {
@@ -307,7 +307,7 @@ export function blockActions(blocks: ReportBlock[]): RecommendedAction[] {
     // The channel's own strongest campaign, named from its own table. Emitted
     // for the heaviest-spending channel only — one per channel produced a run of
     // near-identical "review the top campaign" steps that crowded out the rest.
-    if (b.sourceId === heaviestPaidId) {
+    if (blockKey(b) === heaviestPaidId) {
       const top = topCampaign(b);
       if (top) {
         const evidence =

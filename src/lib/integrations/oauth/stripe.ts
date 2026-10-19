@@ -67,6 +67,15 @@ export const stripeOAuth: OAuthProvider = {
       return "Stripe account";
     }
   },
+
+  async subject(accessToken) {
+    try {
+      const acc = await stripeGet<StripeAccount>(accessToken, "/account");
+      return acc.id ? `stripe:${acc.id}` : null;
+    } catch {
+      return null;
+    }
+  },
   callbackPath: "/api/stripe/callback",
 };
 

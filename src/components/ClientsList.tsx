@@ -156,10 +156,14 @@ export function ClientsList({ clients }: { clients: ClientRow[] }) {
 
   const chips = (c: ClientRow) => {
     const sources = c.data_sources ?? [];
+    // One chip per platform; a client can connect several accounts of one.
+    const perType = new Map<string, number>();
+    for (const s of sources) perType.set(s.type, (perType.get(s.type) ?? 0) + 1);
     return sources.length ? (
-      sources.map((s) => (
-        <span key={s.type} className="whitespace-nowrap rounded-md bg-surface-muted px-[7px] py-0.5 text-[11.5px] text-ink-600">
-          {getIntegrationName(s.type)}
+      [...perType].map(([type, n]) => (
+        <span key={type} className="whitespace-nowrap rounded-md bg-surface-muted px-[7px] py-0.5 text-[11.5px] text-ink-600">
+          {getIntegrationName(type)}
+          {n > 1 ? ` ×${n}` : ""}
         </span>
       ))
     ) : (

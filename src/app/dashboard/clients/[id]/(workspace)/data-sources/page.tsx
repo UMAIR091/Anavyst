@@ -8,7 +8,6 @@ import { IntegrationCard } from "@/components/IntegrationCard";
 import { BigQueryCard } from "@/components/BigQueryCard";
 import { ConnectAccountButton } from "@/components/ConnectAccountModal";
 import { ConnectLinkButton, type ActiveLink } from "@/components/ConnectLinkButton";
-import { HowToVideo } from "@/components/HowToVideo";
 import { linkConnectable } from "@/lib/connectLinks";
 import {
   AvailableIntegrations, ConnectedSource, type AvailableIntegration,
@@ -65,9 +64,15 @@ export default async function ClientDataSourcesPage(props: { params: Promise<{ i
   // "Send connect link" (migration 0048): platforms a client can connect
   // through a link, and this client's links that still work. RLS-scoped; the
   // links carry no token (only its hash is stored, and that isn't readable).
+  // One entry per platform (a client can have several accounts of one).
   const linkIntegrations = ws.integrations
-    .filter((i) => linkConnectable(i.def))
-    .map((i) => ({ id: i.def.id, name: i.def.name, icon: i.def.icon, connected: i.source !== null }));
+    .filter((i, n, all) => linkConnectable(i.def) && all.findIndex((o) => o.def.id === i.def.id) === n)
+    .map((i) => ({
+      id: i.def.id,
+      name: i.def.name,
+      icon: i.def.icon,
+      connected: ws.connectedIntegrations.some((c) => c.def.id === i.def.id),
+    }));
   const { data: linkRows } = await supabase
     .from("connect_links")
     .select("id, types, expires_at, last_used_at")
@@ -83,7 +88,6 @@ export default async function ClientDataSourcesPage(props: { params: Promise<{ i
   }));
   const headerActions = (
     <div className="flex flex-wrap gap-2">
-      <HowToVideo />
       {!client.archived && (
         <ConnectLinkButton
           clientId={clientId}
@@ -128,6 +132,9 @@ export default async function ClientDataSourcesPage(props: { params: Promise<{ i
         lastSyncError={i.lastSyncError}
         reconnectBy={i.reconnectBy}
         sharedWith={i.sharedWith}
+        sameSignInHere={i.sameSignInHere}
+        accountLabel={i.siblings > 0 ? i.accountLabel : null}
+        allowsMultiple={i.allowsMultiple}
       />
     );
 
@@ -158,9 +165,6 @@ export default async function ClientDataSourcesPage(props: { params: Promise<{ i
               <Link href="/dashboard/integrations">Browse all integrations</Link>
             </Button>
           </div>
-          <div className="mx-auto mt-6 max-w-md">
-            <HowToVideo variant="card" />
-          </div>
         </div>
       </ClientSection>
     );
@@ -178,7 +182,7 @@ export default async function ClientDataSourcesPage(props: { params: Promise<{ i
               print the same two facts a second time. */}
           <div className="space-y-3">
             {attention.map((i) => (
-              <div key={i.def.id}>{card(i)}</div>
+              <div key={i.key}>{card(i)}</div>
             ))}
           </div>
         </ClientSection>
@@ -201,7 +205,8 @@ export default async function ClientDataSourcesPage(props: { params: Promise<{ i
           <div className="overflow-hidden rounded-card border border-ink-200 bg-surface">
             {healthy.map((i) => (
               <ConnectedSource
-                key={i.def.id}
+                key={i.key}
+                rowId={i.key}
                 name={i.def.name}
                 icon={i.def.icon}
                 accent={i.def.accent}

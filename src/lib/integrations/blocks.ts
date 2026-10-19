@@ -52,6 +52,13 @@ export type BlockTable = {
 export type ReportBlock = {
   sourceId: string; // data_sources.type
   sourceName: string; // "TikTok Ads"
+  /**
+   * Set only when a report has two sources of one platform (two Meta ad
+   * accounts, migration 0049): the data source id, which tells the blocks
+   * apart, while sourceName then names the account too. Absent otherwise, so
+   * single-account reports are unchanged.
+   */
+  instanceId?: string;
   category: BlockCategory;
   currency: string | null; // set for monetary blocks
   kpis: BlockKpi[];
@@ -59,6 +66,12 @@ export type ReportBlock = {
   tables: BlockTable[];
   notes: string[];
 };
+
+/** Identifies a block within one report (sourceId alone repeats when a client
+ *  has two accounts of one platform). */
+export function blockKey(b: Pick<ReportBlock, "sourceId" | "instanceId">): string {
+  return b.instanceId ?? b.sourceId;
+}
 
 // ── helpers ──────────────────────────────────────────────────
 

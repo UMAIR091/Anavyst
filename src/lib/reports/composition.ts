@@ -11,7 +11,7 @@
 // table with rows, an interpretation. Pagination follows from the count, so the
 // report grows and shrinks with the data rather than with a template.
 import type { GscReportFull, Ga4ReportFull } from "@/lib/google";
-import type { ReportBlock } from "@/lib/integrations/blocks";
+import { blockKey, type ReportBlock } from "@/lib/integrations/blocks";
 
 /** Minimum points before a line is a trend rather than a pair of dots. */
 export const MIN_TREND_POINTS = 5;
@@ -73,6 +73,8 @@ export function shortPeriodNote(days: number): string | null {
 
 export type ChannelWeight = {
   sourceId: string;
+  /** blockKey of the block: unique even with two accounts of one platform. */
+  key: string;
   sourceName: string;
   /** Renderable units this channel contributes. */
   units: number;
@@ -157,6 +159,7 @@ export function assessComposition(input: {
       const units = blockUnits(b);
       return {
         sourceId: b.sourceId,
+        key: blockKey(b),
         sourceName: b.sourceName,
         units,
         // Two or more distinct things to look at justify a page of its own.

@@ -12,7 +12,6 @@ import { NeedsAttention, type AttentionItem } from "@/components/dashboard/Needs
 import { ActivityTimeline } from "@/components/dashboard/ActivityTimeline";
 import { UpNext } from "@/components/dashboard/NextScheduled";
 import { AiPanel } from "@/components/dashboard/AiPanel";
-import { HowToVideo } from "@/components/HowToVideo";
 import {
   SearchPerformance, HomeClients, SampleReportCard, BrandingCard, type HomeClientRow,
 } from "@/components/dashboard/HomeCards";
@@ -522,7 +521,6 @@ export default async function DashboardPage() {
         <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
           <OnboardingChecklist steps={steps} />
           <div className="flex flex-col gap-5">
-            <HowToVideo variant="card" />
             <SampleReportCard agencyName={agency.name} brandColor={agency.brand_color} />
             <BrandingCard />
           </div>
@@ -575,7 +573,6 @@ export default async function DashboardPage() {
               shown only to a workspace with no data source of any kind. It used
               to key off Search Console alone, so an agency reporting from
               LinkedIn or Meta Ads was still told it hadn't connected anything. */}
-          {everySource.length === 0 && <HowToVideo variant="card" />}
           {!setupComplete && everySource.length === 0 && <SampleReportCard agencyName={agency.name} brandColor={agency.brand_color} />}
           <UpNext items={upNext} />
           {hasReal && (

@@ -79,6 +79,18 @@ export const linkedinOAuth: OAuthProvider = {
       return "LinkedIn account";
     }
   },
+
+  // OpenID Connect `sub`: the member's permanent id.
+  async subject(accessToken) {
+    try {
+      const res = await fetch(`${API}/v2/userinfo`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => ({}));
+      return typeof data.sub === "string" && data.sub ? `linkedin:${data.sub}` : null;
+    } catch {
+      return null;
+    }
+  },
   callbackPath: "/api/linkedin/callback",
 };
 

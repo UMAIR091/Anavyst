@@ -54,7 +54,7 @@ export async function POST(req: Request) {
     // (0046); the client's row is upserted on (client_id, type), see 0023.
     const def = getIntegration("woocommerce");
     if (!def) throw new Error("WooCommerce isn't available");
-    const source = await saveSignIn(supabase, {
+    const { source } = await saveSignIn(supabase, {
       agencyId: client.agency_id as string,
       clientId,
       def,
@@ -65,6 +65,7 @@ export async function POST(req: Request) {
       },
       identity: displayName,
       config,
+      enforceLimit: true,
     });
 
     await syncDataSource(supabase, source);

@@ -12,11 +12,15 @@
 // both Reports and Automations gate on whether a synced snapshot exists — so it
 // is loaded once per tab rather than split into partial loaders that would drift
 // apart.
+//
+// A client can connect several accounts of one platform (migration 0049), so
+// there is one entry per connected ACCOUNT (data source), plus one empty entry
+// for each live platform the client hasn't connected.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { IntegrationSource } from "@/components/IntegrationCard";
 import type { PerformanceSource } from "@/components/ClientPerformance";
 import type { ConnectableIntegration } from "@/components/ConnectAccountModal";
-import { liveIntegrations, listIntegrations, isConnectable } from "@/lib/integrations/registry";
+import { allowsMultipleAccounts, liveIntegrations, listIntegrations, isConnectable } from "@/lib/integrations/registry";
 import { hasAnalyticsView, groupForIntegration } from "@/lib/integrations/analyticsViews";
 import { sourceHealth } from "@/lib/integrations/status";
 import { reconnectDeadline } from "@/lib/integrations/tokenRenewal";
@@ -24,6 +28,9 @@ import type { CachedPeriodDays } from "@/lib/reports/periods";
 import type { IntegrationDef } from "@/lib/integrations/types";
 
 export type WorkspaceIntegration = {
+  /** Unique within the workspace: the data source id, or the platform id for
+   *  a platform that isn't connected. */
+  key: string;
   def: IntegrationDef;
   source: IntegrationSource;
   snapshot: unknown;
@@ -39,6 +46,14 @@ export type WorkspaceIntegration = {
   reconnectBy: string | null;
   /** How many OTHER clients use the same saved sign-in (migration 0046). */
   sharedWith: number;
+  /** This client's other accounts of the same platform on the same sign-in. */
+  sameSignInHere: number;
+  /** The chosen account's name, when one is chosen. */
+  accountLabel: string | null;
+  /** This client's other sources of the same platform. */
+  siblings: number;
+  /** Whether this platform takes more than one account per client. */
+  allowsMultiple: boolean;
 };
 
 export type ClientWorkspace = {
@@ -70,6 +85,7 @@ type DsRow = {
   last_synced_at: string | null;
   last_sync_error: string | null;
   connection_id: string | null;
+  created_at?: string | null;
   connection: SignInRow | SignInRow[] | null;
 };
 
@@ -97,36 +113,38 @@ export async function loadClientWorkspace(
   const { data: dsRows } = await supabase
     .from("data_sources")
     .select(
-      "id, type, display_name, config, status, last_synced_at, last_sync_error, connection_id, " +
+      "id, type, display_name, config, status, last_synced_at, last_sync_error, connection_id, created_at, " +
         "connection:connections!data_sources_connection_fkey(identity_provider, token_expires_at)"
     )
-    .eq("client_id", clientId);
-  const dsByType = new Map<string, DsRow>();
-  for (const d of (dsRows ?? []) as unknown as DsRow[]) dsByType.set(d.type, d);
+    .eq("client_id", clientId)
+    .order("created_at");
+  const rows = (dsRows ?? []) as unknown as DsRow[];
+  const dsByType = new Map<string, DsRow[]>();
+  for (const d of rows) dsByType.set(d.type, [...(dsByType.get(d.type) ?? []), d]);
 
   // How many other clients share each saved sign-in this client uses.
-  const signInIds = Array.from(dsByType.values()).map((d) => d.connection_id).filter((id): id is string => Boolean(id));
-  const sharedCount = new Map<string, number>();
+  const signInIds = [...new Set(rows.map((d) => d.connection_id).filter((id): id is string => Boolean(id)))];
+  const sharedClients = new Map<string, Set<string>>();
   if (signInIds.length) {
     const { data: siblings } = await supabase
       .from("data_sources")
-      .select("connection_id")
+      .select("connection_id, client_id")
       .in("connection_id", signInIds)
       .neq("client_id", clientId);
     for (const s of siblings ?? []) {
       const id = s.connection_id as string;
-      sharedCount.set(id, (sharedCount.get(id) ?? 0) + 1);
+      const set = sharedClients.get(id) ?? new Set<string>();
+      set.add(s.client_id as string);
+      sharedClients.set(id, set);
     }
   }
 
   // Group connected sources by snapshot table, then bulk-fetch snapshots.
   const tableToIds = new Map<string, string[]>();
   for (const def of liveIntegrations()) {
-    const ds = dsByType.get(def.id);
-    if (ds?.id && def.snapshotTable) {
-      const arr = tableToIds.get(def.snapshotTable) ?? [];
-      arr.push(ds.id);
-      tableToIds.set(def.snapshotTable, arr);
+    for (const ds of dsByType.get(def.id) ?? []) {
+      if (!def.snapshotTable) continue;
+      tableToIds.set(def.snapshotTable, [...(tableToIds.get(def.snapshotTable) ?? []), ds.id]);
     }
   }
   const snapshotByDsId = new Map<string, unknown>();
@@ -141,20 +159,17 @@ export async function loadClientWorkspace(
     }),
   );
 
-  const integrations: WorkspaceIntegration[] = liveIntegrations().map((def) => {
-    const ds = dsByType.get(def.id) ?? null;
+  const entryFor = (def: IntegrationDef, ds: DsRow | null, sameType: DsRow[]): WorkspaceIntegration => {
     const snapshot = ds?.id ? snapshotByDsId.get(ds.id) ?? null : null;
     const config = (ds?.config as Record<string, unknown> | null) ?? {};
+    const accounts = def.readAccounts?.(config) ?? [];
+    const selectedAccountId = def.readSelected?.(config) ?? null;
     const source: IntegrationSource = ds
-      ? {
-          id: ds.id,
-          display_name: ds.display_name ?? null,
-          accounts: def.readAccounts?.(config) ?? [],
-          selectedAccountId: def.readSelected?.(config) ?? null,
-        }
+      ? { id: ds.id, display_name: ds.display_name ?? null, accounts, selectedAccountId }
       : null;
 
     return {
+      key: ds?.id ?? def.id,
       def,
       source,
       snapshot,
@@ -184,8 +199,17 @@ export async function loadClientWorkspace(
               token_expires_at: signInOf(ds)?.token_expires_at ?? null,
             })
           : null,
-      sharedWith: ds?.connection_id ? sharedCount.get(ds.connection_id) ?? 0 : 0,
+      sharedWith: ds?.connection_id ? sharedClients.get(ds.connection_id)?.size ?? 0 : 0,
+      sameSignInHere: ds?.connection_id ? sameType.filter((o) => o.id !== ds.id && o.connection_id === ds.connection_id).length : 0,
+      accountLabel: selectedAccountId ? accounts.find((a) => a.id === selectedAccountId)?.name ?? selectedAccountId : null,
+      siblings: ds ? sameType.length - 1 : 0,
+      allowsMultiple: allowsMultipleAccounts(def),
     };
+  };
+
+  const integrations: WorkspaceIntegration[] = liveIntegrations().flatMap((def) => {
+    const sameType = dsByType.get(def.id) ?? [];
+    return sameType.length ? sameType.map((ds) => entryFor(def, ds, sameType)) : [entryFor(def, null, [])];
   });
 
   const connectedIntegrations = integrations.filter((i) => i.source !== null);
@@ -212,8 +236,10 @@ export async function loadClientWorkspace(
   const vizSources = integrations.filter((i) => hasAnalyticsView(i.def.id) && i.snapshot);
   const performanceSources: PerformanceSource[] = vizSources.map((i) => ({
     id: i.def.id,
+    key: i.key,
+    // Two accounts of one platform are told apart by accountLabel.
     name: i.def.name,
-    accountLabel: i.source?.accounts.find((a) => a.id === i.source?.selectedAccountId)?.name ?? null,
+    accountLabel: i.accountLabel,
     // Metric family, so Performance only ever combines like with like.
     group: groupForIntegration(i.def.id),
     snapshot: i.snapshot,

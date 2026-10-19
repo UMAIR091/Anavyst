@@ -55,11 +55,11 @@ export async function GET(req: Request) {
     const displayName = await getShopName(shop, tokens.access_token);
     const config = { accounts: [{ id: shop, name: displayName }], account_id: shop };
 
-    // A store's token serves that one store, so it's its own sign-in (0046);
-    // the client's row is upserted on (client_id, type), see 0023.
+    // A store's token serves that one store, so it's its own sign-in (0046),
+    // on the client's source for that store (0049): a client can connect two.
     const def = getIntegration("shopify");
     if (!def) throw new Error("Shopify isn't available");
-    const source = await saveSignIn(supabase, {
+    const { source } = await saveSignIn(supabase, {
       agencyId: agency.id,
       clientId,
       def,
@@ -70,7 +70,10 @@ export async function GET(req: Request) {
       },
       identity: displayName,
       config,
+      // The token stands for the store itself.
+      subject: `shopify:${shop}`,
       userId: user.id,
+      enforceLimit: true,
     });
 
     await syncDataSource(supabase, source);

@@ -2,22 +2,56 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalShell } from "@/components/LegalShell";
 import { COMPANY, LEGAL_LAST_UPDATED } from "@/lib/company";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const metadata: Metadata = {
   title: `Data Deletion Request — ${COMPANY.product}`,
   description: `How to delete the data ${COMPANY.product} stores about you or your clients — instantly in the app, or in full by request.`,
 };
 
+// The status of a request Meta sent us (/api/meta/data-deletion answers Meta
+// with this page's URL and a confirmation code). The code is the only lookup
+// key, and the page shows nothing but what was deleted and when.
+async function deletionStatus(code: string | undefined) {
+  if (!code || !/^[A-Za-z0-9_-]{6,40}$/.test(code)) return null;
+  const { data } = await createAdminClient()
+    .from("meta_deletion_requests")
+    .select("code, sign_ins_deleted, sources_deleted, created_at")
+    .eq("code", code)
+    .maybeSingle();
+  return data ? { found: true as const, ...data } : { found: false as const, code };
+}
+
 // Publicly accessible data-deletion instructions. This URL doubles as the
 // "Data Deletion Instructions URL" required in Meta App settings and supports
 // Google verification review — keep it reachable without sign-in.
-export default function DataDeletionPage() {
+export default async function DataDeletionPage(props: { searchParams: Promise<{ code?: string }> }) {
+  const status = await deletionStatus((await props.searchParams).code);
   return (
     <LegalShell
       title="Data Deletion Request"
       subtitle="Delete integration data instantly in the app, or request full account deletion."
       lastUpdated={LEGAL_LAST_UPDATED}
     >
+      {status && (
+        <div className="not-prose mb-8 rounded-xl border border-ink-200 bg-surface-subtle px-4 py-3 text-sm text-ink-700">
+          {status.found ? (
+            <>
+              <p className="font-semibold text-ink-900">Request {status.code}: completed</p>
+              <p className="mt-1">
+                Received {new Date(status.created_at as string).toUTCString()}. Deleted at once: {status.sign_ins_deleted}{" "}
+                saved sign-in{status.sign_ins_deleted === 1 ? "" : "s"} and {status.sources_deleted} connected data source
+                {status.sources_deleted === 1 ? "" : "s"}, with all data synced through them.
+              </p>
+            </>
+          ) : (
+            <p>
+              We couldn&apos;t find request {status.code}. If you made it through Facebook or Instagram, check the code, or
+              email us at the address below.
+            </p>
+          )}
+        </div>
+      )}
       <h2>Option 1 — Delete a connected integration&apos;s data (instant)</h2>
       <p>
         If you connected a data source (Google Search Console, Google Analytics, Meta Ads, or any other integration)

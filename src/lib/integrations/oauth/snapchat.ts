@@ -97,6 +97,15 @@ export const snapchatOAuth: OAuthProvider = {
       return "Snapchat account";
     }
   },
+
+  async subject(accessToken) {
+    try {
+      const data = await snapGet<{ me?: { id?: string } }>("/me", accessToken);
+      return data.me?.id ? `snapchat:${data.me.id}` : null;
+    } catch {
+      return null;
+    }
+  },
   callbackPath: "/api/snapchat/callback",
 };
 

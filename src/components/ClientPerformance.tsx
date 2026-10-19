@@ -30,6 +30,9 @@ import { buildOverview } from "@/lib/integrations/overview";
 export type PerformanceSource = {
   /** Integration id, e.g. "meta_ads" — selects the right chart view. */
   id: string;
+  /** Unique per source (the data source id): a client can have two accounts
+   *  of one platform. Defaults to `id`. */
+  key?: string;
   /** Display name, e.g. "Meta Ads". */
   name: string;
   /** The selected account within that source, when the provider exposes one. */
@@ -40,6 +43,8 @@ export type PerformanceSource = {
 };
 
 /** One selectable cached window, resolved server-side into a link. */
+const keyOf = (s: PerformanceSource) => s.key ?? s.id;
+
 export type PerformancePeriodOption = {
   days: number;
   /** Full label, e.g. "Last 28 days" — used for the accessible name. */
@@ -81,7 +86,7 @@ export function ClientPerformance({
 
   // Cross-platform paid total, scoped to whatever is currently visible so it
   // always matches the blocks beneath it.
-  const visibleSources = source === ALL ? inGroup : inGroup.filter((s) => s.id === source);
+  const visibleSources = source === ALL ? inGroup : inGroup.filter((s) => keyOf(s) === source);
   const paidAggregate = useMemo(
     () => aggregatePaidSnapshots(visibleSources.filter((s) => s.group === "paid").map((s) => ({ type: s.id, snapshot: s.snapshot }))),
     [visibleSources]
@@ -167,7 +172,7 @@ export function ClientPerformance({
               {group === ALL ? "All" : `All ${GROUP_LABELS[group].toLowerCase()}`}
             </Pill>
             {inGroup.map((s) => (
-              <Pill key={s.id} small active={source === s.id} onClick={() => setSource(s.id)}>
+              <Pill key={keyOf(s)} small active={source === keyOf(s)} onClick={() => setSource(keyOf(s))}>
                 {s.name}
                 {s.accountLabel ? <span className="ml-1.5 opacity-60">{s.accountLabel}</span> : null}
               </Pill>
@@ -263,7 +268,7 @@ export function ClientPerformance({
 
               <div className="space-y-8">
                 {groupSources.map((s) => (
-                  <div key={s.id}>
+                  <div key={keyOf(s)}>
                     <h4 className="mb-3 text-sm font-medium text-ink-700">
                       {s.name}
                       {s.accountLabel ? <span className="ml-2 font-normal text-ink-500">{s.accountLabel}</span> : null}

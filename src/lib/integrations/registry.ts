@@ -160,6 +160,17 @@ export function availableIdentityProviders(def: IntegrationDef, viewerIsAdmin: b
   return (def.identityProviders ?? []).filter((p) => (p.enabled?.() ?? true) && (!p.adminsOnly || viewerIsAdmin));
 }
 
+// Search Console and GA4 report one site / property per client: their report
+// sections are built for a single one. The database holds the same line
+// (migration 0049).
+export const SINGLE_ACCOUNT_TYPES: ReadonlySet<string> = new Set(["gsc", "ga4"]);
+
+// Whether a client can connect more than one account of this platform (two
+// Meta ad accounts, two Google Ads accounts …), each its own data source.
+export function allowsMultipleAccounts(def: IntegrationDef | undefined): boolean {
+  return Boolean(def && def.readSelected && !SINGLE_ACCOUNT_TYPES.has(def.id));
+}
+
 // A sign-in button's text and weight, by its place among the options shown.
 export function signInButton(p: IdentityProviderOption, index: number): { label: string; secondary: boolean } {
   const alternative = index > 0 && Boolean(p.alternativeLabel);

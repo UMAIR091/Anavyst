@@ -4,10 +4,10 @@ import { ShieldCheck, Eye, Trash2, ArrowRight, LogIn, Users } from "lucide-react
 import { getCurrentUserAndAgency } from "@/lib/agency";
 import { createClient } from "@/lib/supabase/server";
 import {
-  availableIdentityProviders, getIntegration, isConnectable, signInButton, signInRouteOf,
+  allowsMultipleAccounts, availableIdentityProviders, getIntegration, isConnectable, signInButton, signInRouteOf,
 } from "@/lib/integrations/registry";
 import { isPlatformAdmin } from "@/lib/admin";
-import { isShareable } from "@/lib/integrations/connections";
+import { duplicatesOf, isShareable } from "@/lib/integrations/connections";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { COMPANY, DATA_PROMISE } from "@/lib/company";
@@ -54,7 +54,7 @@ export default async function ConnectConsentPage(
         // that client only.
         supabase
           .from("connections")
-          .select("id, display_name, identity_provider, status")
+          .select("id, client_id, display_name, identity_provider, subject_hash, status")
           .eq("type", def.id)
           .or(`client_id.is.null,client_id.eq.${client.id}`)
           .order("created_at"),
@@ -62,13 +62,24 @@ export default async function ConnectConsentPage(
       ])
     : [{ data: [] }, { data: [] }];
   const uses = (useRows ?? []) as { connection_id: string; client_id: string | null }[];
-  const currentSignIn = uses.find((u) => u.client_id === client.id)?.connection_id ?? null;
-  const savedSignIns = ((signInRows ?? []) as { id: string; display_name: string | null; identity_provider: string | null; status: string }[]).map((s) => {
+  // A client can use several sign-ins of one platform, one per account (0049).
+  const currentSignIns = new Set(uses.filter((u) => u.client_id === client.id).map((u) => u.connection_id));
+  const multiple = allowsMultipleAccounts(def);
+  type SignInRow = {
+    id: string; client_id: string | null; display_name: string | null; identity_provider: string | null;
+    subject_hash: string | null; status: string;
+  };
+  const signIns = (signInRows ?? []) as SignInRow[];
+  const savedSignIns = signIns.map((s, i) => {
     const route = signInRouteOf(def, s.identity_provider);
+    // The same login saved twice: flagged on the later copy, which links to
+    // the review page (combine, reuse or keep both).
+    const earlier = duplicatesOf({ ...s }, signIns.slice(0, i))[0] ?? null;
     return {
       ...s,
-      clients: uses.filter((u) => u.connection_id === s.id).length,
-      isCurrent: s.id === currentSignIn,
+      clients: new Set(uses.filter((u) => u.connection_id === s.id).map((u) => u.client_id)).size,
+      isCurrent: currentSignIns.has(s.id),
+      duplicateOf: earlier,
       via: route ? route.via ?? route.label.replace(/^Continue with /, "") : null,
       // Renewing goes back through the provider, on the same sign-in route.
       // API-key sign-ins are renewed by entering the key again instead.
@@ -112,19 +123,34 @@ export default async function ConnectConsentPage(
                         <>Used by {s.clients} client{s.clients === 1 ? "" : "s"}{s.isCurrent ? ", including this one" : ""}</>
                       )}
                     </p>
+                    {s.duplicateOf && (
+                      <p className="mt-0.5 text-xs text-warning-700">
+                        {s.duplicateOf.strong ? "The same login as" : "Same name as"} “{s.duplicateOf.displayName ?? "another sign-in"}”
+                        , saved earlier.{" "}
+                        <Link
+                          href={`/dashboard/connect/${def.id}/review?clientId=${client.id}&connection=${s.id}`}
+                          className="font-medium underline"
+                        >
+                          Review
+                        </Link>
+                      </p>
+                    )}
                   </div>
-                  <div className="flex items-center gap-2">
-                    {s.status === "revoked" || s.isCurrent ? (
-                      s.reconnectHref && (
-                        <Button asChild size="sm" variant={s.status === "revoked" ? "default" : "outline"}>
-                          <a href={s.reconnectHref}>Reconnect</a>
-                        </Button>
-                      )
-                    ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(s.status === "revoked" || s.isCurrent) && s.reconnectHref && (
+                      <Button asChild size="sm" variant={s.status === "revoked" ? "default" : "outline"}>
+                        <a href={s.reconnectHref}>Reconnect</a>
+                      </Button>
+                    )}
+                    {/* Another client, or (where a client can have several)
+                        another account for this one, from the same sign-in. */}
+                    {s.status !== "revoked" && (!s.isCurrent || multiple) && (
                       <form action="/api/connections/attach" method="post">
                         <input type="hidden" name="clientId" value={client.id} />
                         <input type="hidden" name="connectionId" value={s.id} />
-                        <Button type="submit" size="sm">Use for {client.name}</Button>
+                        <Button type="submit" size="sm" variant={s.isCurrent ? "outline" : "default"}>
+                          {s.isCurrent ? `Add another ${def.accountNoun}` : `Use for ${client.name}`}
+                        </Button>
                       </form>
                     )}
                   </div>

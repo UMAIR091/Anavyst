@@ -97,7 +97,9 @@ export function reportDataHash(data: { gsc: GscReportFull | null; ga4: Ga4Report
   const basis = JSON.stringify({
     // Blocks participate in the fingerprint so a change in ad spend (or any
     // other non-Google channel) correctly invalidates the cached AI insights.
-    blocks: (data.blocks ?? []).map((b) => ({ id: b.sourceId, kpis: b.kpis, tables: b.tables })),
+    // instanceId only when a report has two accounts of one platform, so
+    // every other report keeps its fingerprint (and its cached insights).
+    blocks: (data.blocks ?? []).map((b) => ({ id: b.sourceId, ...(b.instanceId ? { instance: b.instanceId } : {}), kpis: b.kpis, tables: b.tables })),
     gsc: data.gsc
       ? {
           totals: data.gsc.totals,

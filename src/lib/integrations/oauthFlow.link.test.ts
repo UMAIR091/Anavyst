@@ -24,6 +24,8 @@ vi.mock("@/lib/supabase/admin", () => ({
         select: () => b,
         eq: () => b,
         maybeSingle: async () => ({ data: table === "connect_links" ? state.link : state.existing }),
+        // The client's sources of the platform (several accounts are allowed).
+        limit: async () => ({ data: state.existing ? [state.existing] : [] }),
       };
       return b;
     },
@@ -97,5 +99,12 @@ describe("handleLinkConnect", () => {
     state.limitAllowed = false;
     const res = await start(`token=${token}&type=meta_ads`);
     expect(res.headers.get("location")).toContain("?error=");
+  });
+
+  it("lets a platform already connected sign in again (a further account is checked when added)", async () => {
+    state.limitAllowed = false;
+    state.existing = { id: "ds-1" };
+    const res = await start(`token=${token}&type=meta_ads`);
+    expect(new URL(res.headers.get("location")!).hostname).toBe("www.facebook.com");
   });
 });

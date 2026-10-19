@@ -91,6 +91,19 @@ export const mailchimpOAuth: OAuthProvider = {
     }
   },
 
+  // The account plus the login within it.
+  async subject(accessToken): Promise<string | null> {
+    const { dc, token } = unpack(accessToken);
+    try {
+      const res = await fetch(`${apiBase(dc)}/`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => ({}));
+      return data.account_id ? `mailchimp:${data.account_id}:${data.login_id ?? ""}` : null;
+    } catch {
+      return null;
+    }
+  },
+
   callbackPath: "/api/mailchimp/callback",
 };
 

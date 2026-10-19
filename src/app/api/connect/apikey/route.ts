@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentUserAndAgency } from "@/lib/agency";
 import { syncDataSource } from "@/lib/sync";
 import { saveSignIn } from "@/lib/integrations/connections";
+import crypto from "node:crypto";
 import { getIntegration, isLive } from "@/lib/integrations/registry";
 import { logError } from "@/lib/errorLog";
 import { revalidateIntegrationHealth } from "@/lib/integrationHealth";
@@ -37,9 +38,14 @@ export async function POST(req: Request) {
   const { data: client } = await supabase.from("clients").select("id, agency_id").eq("id", clientId).maybeSingle();
   if (!client) return fail("Client not found");
 
-  // Enforce the plan's per-client integration limit (trial only; paid = unlimited).
-  const limit = await checkIntegrationLimit(supabase, client.agency_id as string, clientId);
-  if (!limit.allowed) return fail(limit.reason ?? "Integration limit reached.");
+  // Enforce the plan's per-client integration limit (trial only; paid =
+  // unlimited) before a first connection; a further account is checked as it
+  // is added (saveSignIn).
+  const { data: sameType } = await supabase.from("data_sources").select("id").eq("client_id", clientId).eq("type", def.id).limit(1);
+  if (!sameType?.length) {
+    const limit = await checkIntegrationLimit(supabase, client.agency_id as string, clientId);
+    if (!limit.allowed) return fail(limit.reason ?? "Integration limit reached.");
+  }
 
   // Collect only the declared fields (trimmed).
   const fields: Record<string, string> = {};
@@ -50,9 +56,10 @@ export async function POST(req: Request) {
     const config = def.buildConfig(accounts);
 
     // Saved as a shared sign-in (migration 0046), so an agency-wide key such as
-    // Ahrefs or Semrush can serve every client; the client's row is upserted on
-    // (client_id, type), see 0023.
-    const source = await saveSignIn(supabase, {
+    // Ahrefs or Semrush can serve every client, on the client's source for the
+    // chosen account (0049). The key itself identifies the login: the same key
+    // entered twice is recognised (its hash, never the key, is compared).
+    const { source, duplicate } = await saveSignIn(supabase, {
       agencyId: agency.id,
       clientId,
       def,
@@ -63,12 +70,18 @@ export async function POST(req: Request) {
       },
       identity: displayName,
       config,
+      subject: `key:${crypto.createHash("sha256").update(token).digest("hex")}`,
       userId: user.id,
+      enforceLimit: true,
     });
 
-    if (def.readSelected?.(config)) await syncDataSource(supabase, source);
+    if (def.readSelected?.(source.config ?? {})) await syncDataSource(supabase, source);
     revalidateIntegrationHealth(agency.id);
-    return NextResponse.redirect(`${base}/dashboard/clients/${clientId}?connected=${def.id}`);
+    return NextResponse.redirect(
+      duplicate
+        ? `${base}/dashboard/connect/${def.id}/review?clientId=${clientId}&connection=${source.connection_id}`
+        : `${base}/dashboard/clients/${clientId}?connected=${def.id}`
+    );
   } catch (err) {
     // Invalid key, provider verification failure, or storage error. Log the raw
     // detail; show the user a safe message (an invalid-key message is surfaced

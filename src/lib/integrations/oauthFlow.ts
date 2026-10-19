@@ -16,7 +16,7 @@ import { logError } from "@/lib/errorLog";
 import { logDetail, publicMessage } from "@/lib/errors";
 import { checkIntegrationLimit } from "@/lib/billing/limits";
 import type { IntegrationDef, OAuthProvider } from "./types";
-import { saveSignIn } from "./connections";
+import { saveSignIn, type DuplicateMatch } from "./connections";
 import { CONNECT_FLASH_COOKIE, CONNECT_FLASH_MAX_AGE, encodeConnectFlash, type ConnectFlash } from "./connectFlash";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
@@ -62,14 +62,15 @@ export async function handleLinkConnect(req: Request): Promise<Response> {
     if (!options.some((p) => p.id === provider)) return back("That sign-in option isn't available.");
   }
 
-  // The agency's plan still decides what its clients can add.
+  // The agency's plan still decides what its clients can add. (A further
+  // account of a platform already connected is checked when it is added.)
   const { data: existing } = await admin
     .from("data_sources")
     .select("id")
     .eq("client_id", link.clientId)
     .eq("type", def.id)
-    .maybeSingle();
-  if (!existing) {
+    .limit(1);
+  if (!existing?.length) {
     const limit = await checkIntegrationLimit(admin, link.agencyId, link.clientId);
     if (!limit.allowed) {
       return back(`This connection isn't available right now. Please let ${link.agency.name} know.`);
@@ -162,8 +163,18 @@ export async function handleConnect(req: Request): Promise<Response> {
   const { data: client } = await supabase.from("clients").select("id, agency_id").eq("id", clientId).maybeSingle();
   if (!client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
 
-  // Enforce the plan's per-client integration limit (trial only; paid = unlimited).
-  const limit = await checkIntegrationLimit(supabase, client.agency_id as string, clientId);
+  // Enforce the plan's per-client integration limit (trial only; paid =
+  // unlimited) before a first connection. Renewing a platform the client
+  // already has adds nothing; a further account is checked as it is added.
+  const { data: sameType } = await supabase
+    .from("data_sources")
+    .select("id")
+    .eq("client_id", clientId)
+    .eq("type", def.id)
+    .limit(1);
+  const limit = sameType?.length
+    ? { allowed: true, reason: null }
+    : await checkIntegrationLimit(supabase, client.agency_id as string, clientId);
   if (!limit.allowed) {
     const base = process.env.NEXT_PUBLIC_APP_URL ?? url.origin;
     return NextResponse.redirect(`${base}/dashboard/clients/${clientId}?connect_error=${encodeURIComponent(limit.reason ?? "Integration limit reached.")}`);
@@ -313,12 +324,17 @@ export async function handleCallback(req: Request): Promise<Response> {
   if (!client) return fail("Client not found");
 
   try {
-    const flash = await completeOAuthConnect(supabase, agency.id, clientId, def, oauth, code, provider, field, {
-      connectionId,
-      userId: user.id,
-    });
+    const { flash, connectionId: savedId, duplicate } = await completeOAuthConnect(
+      supabase, agency.id, clientId, def, oauth, code, provider, field, { connectionId, userId: user.id }
+    );
     (await cookies()).set(NONCE_COOKIE, "", { maxAge: 0, path: "/" });
-    const res = NextResponse.redirect(`${appBase}/dashboard/clients/${clientId}?connected=${def.id}`);
+    // The same login was already saved: let the user choose to renew that
+    // one, reuse it, or keep both, rather than silently piling up copies.
+    const res = NextResponse.redirect(
+      duplicate
+        ? `${appBase}/dashboard/connect/${def.id}/review?clientId=${clientId}&connection=${savedId}`
+        : `${appBase}/dashboard/clients/${clientId}?connected=${def.id}`
+    );
     // Read once by ConnectStatusToast, so it isn't httpOnly.
     res.cookies.set(CONNECT_FLASH_COOKIE, encodeConnectFlash(flash), {
       maxAge: CONNECT_FLASH_MAX_AGE,
@@ -341,11 +357,20 @@ export async function handleCallback(req: Request): Promise<Response> {
   }
 }
 
+export type ConnectOutcome = {
+  flash: ConnectFlash;
+  connectionId: string;
+  // A fresh sign-in that looks like one already saved (see saveSignIn).
+  duplicate: DuplicateMatch | null;
+};
+
 // Exchanges the code, lists accounts, saves the sign-in (shared across the
-// agency's clients, migration 0046) and attaches it to this client, and syncs
-// immediately if exactly one account was auto-selected. With a connectionId it
-// renews that saved sign-in, reconnecting every client on it. Returns who
-// signed in and which account was selected, for the success toast.
+// agency's clients, migration 0046) and places it on one of this client's
+// sources: the account it auto-selected, or the client's pending source for
+// the platform (migration 0049). Syncs whatever has an account chosen. With a
+// connectionId it renews that saved sign-in, reconnecting every client on it,
+// and only with the same login. Returns who signed in and which account was
+// selected, for the success toast.
 export async function completeOAuthConnect(
   supabase: SupabaseClient,
   agencyId: string,
@@ -356,25 +381,23 @@ export async function completeOAuthConnect(
   provider?: string,
   connectValue?: string,
   opts: { connectionId?: string; userId?: string; clientOwned?: boolean } = {}
-): Promise<ConnectFlash> {
+): Promise<ConnectOutcome> {
   if (!def.listAccounts || !def.buildConfig) throw new Error("Integration is not connectable");
 
   const tokens = await oauth.exchangeCode(code, { provider });
   const accessToken = tokens.access_token;
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
 
-  const [identity, accounts] = await Promise.all([
+  const [identity, subject, accounts] = await Promise.all([
     oauth.identity(accessToken, { provider }),
+    oauth.subject ? oauth.subject(accessToken, { provider }).catch(() => null) : Promise.resolve(null),
     def.listAccounts(accessToken, { provider, connectValue }),
   ]);
   const config = def.buildConfig(accounts);
 
-  // Saves the sign-in (or renews the one being reconnected) and points this
-  // client at it. The client's row is upserted on (client_id, type), so a
-  // reconnect updates it in place and its snapshots stay linked (0023). The
-  // identity provider is recorded so refresh and provider-specific API headers
-  // route correctly later.
-  const source = await saveSignIn(supabase, {
+  // The identity provider is recorded so refresh and provider-specific API
+  // headers route correctly later.
+  const saved = await saveSignIn(supabase, {
     agencyId,
     clientId,
     def,
@@ -382,21 +405,38 @@ export async function completeOAuthConnect(
     identity,
     identityProvider: provider,
     config,
+    subject,
+    accounts,
     connectionId: opts.connectionId,
     userId: opts.userId,
     clientOwned: opts.clientOwned,
+    enforceLimit: true,
   });
 
-  const selected = def.readSelected?.(source.config ?? {}) ?? null;
-  if (selected) {
-    await syncDataSource(supabase, source);
+  for (const source of saved.clientSources) {
+    if (def.readSelected?.(source.config ?? {})) await syncDataSource(supabase, source);
   }
 
   // Reflect the new connection in the cached dashboard health rollup at once.
   revalidateIntegrationHealth(agencyId);
 
+  const selected = def.readSelected?.(saved.source.config ?? {}) ?? null;
+  const renewal = saved.renewal;
+  const note = renewal
+    ? `Renewed for ${renewal.restored} source${renewal.restored === 1 ? "" : "s"}` +
+      (renewal.lacking.length
+        ? `; ${renewal.lacking.length} ${def.accountNoun}${renewal.lacking.length === 1 ? "" : "s"} still need${renewal.lacking.length === 1 ? "s" : ""} access`
+        : "")
+    : null;
   return {
-    account: selected ? (accounts.find((a) => a.id === selected)?.name ?? null) : null,
-    identity: typeof identity === "string" ? identity : null,
+    flash: {
+      account: selected
+        ? (accounts.find((a) => a.id === selected)?.name ?? def.readAccounts?.(saved.source.config ?? {}).find((a) => a.id === selected)?.name ?? null)
+        : null,
+      identity: typeof identity === "string" ? identity : null,
+      ...(note ? { note } : {}),
+    },
+    connectionId: saved.connectionId,
+    duplicate: saved.duplicate,
   };
 }

@@ -26,8 +26,12 @@ export function ConnectedSource({
   accent,
   accountLabel,
   lastSyncedAt,
+  rowId,
   children,
 }: {
+  /** Unique per row (the data source id): a client can have two accounts of
+   *  one platform. */
+  rowId?: string;
   name: string;
   icon: string;
   accent: string;
@@ -40,7 +44,7 @@ export function ConnectedSource({
   const [open, setOpen] = React.useState(false);
   const Icon = integrationIcon(icon);
   const tint = integrationTint(accent);
-  const id = `source-${name.replace(/\W/g, "")}`;
+  const id = `source-${(rowId ?? name).replace(/\W/g, "")}`;
 
   // A row in the "Connected" list card (rows are divided by the list, not boxed).
   return (

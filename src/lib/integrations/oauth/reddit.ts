@@ -111,6 +111,15 @@ export const redditOAuth: OAuthProvider = {
       return "Reddit account";
     }
   },
+
+  async subject(accessToken) {
+    try {
+      const data = await redditFetch<{ id?: string }>(`${IDENTITY_API}/me`, accessToken);
+      return data.id ? `reddit:${data.id}` : null;
+    } catch {
+      return null;
+    }
+  },
   callbackPath: "/api/reddit/callback",
 };
 

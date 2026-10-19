@@ -55,14 +55,14 @@ export async function GET(req: Request) {
   if (!client) return fail("Client not found");
 
   try {
-    const { token, secret } = await xAccessToken(saved.token, saved.secret, verifier);
+    const { token, secret, userId } = await xAccessToken(saved.token, saved.secret, verifier);
     const stored = packXToken(token, secret);
     const [identity, accounts] = await Promise.all([xIdentity(stored), listXAdsAccounts(stored)]);
     const config = def.buildConfig(accounts);
 
-    // Saved as a shared sign-in (0046) other clients can reuse; the client's
-    // row is upserted on (client_id, type), see 0023.
-    const source = await saveSignIn(supabase, {
+    // Saved as a shared sign-in (0046) other clients can reuse, on the
+    // client's source for the chosen account (0049).
+    const { source } = await saveSignIn(supabase, {
       agencyId: agency.id,
       clientId: saved.clientId,
       def,
@@ -73,10 +73,12 @@ export async function GET(req: Request) {
       },
       identity,
       config,
+      subject: userId ? `x:${userId}` : null,
       userId: user.id,
+      enforceLimit: true,
     });
 
-    if (def.readSelected?.(config)) await syncDataSource(supabase, source);
+    if (def.readSelected?.(source.config ?? {})) await syncDataSource(supabase, source);
     clear();
     return NextResponse.redirect(`${base}/dashboard/clients/${saved.clientId}?connected=${def.id}`);
   } catch (err) {

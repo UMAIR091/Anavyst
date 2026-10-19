@@ -25,7 +25,7 @@ export default async function DataPrivacyPage() {
   const supabase = createClient();
   const { data: sources } = await supabase
     .from("data_sources")
-    .select("id, type, display_name, created_at, last_synced_at, clients(name)")
+    .select("id, type, display_name, config, created_at, last_synced_at, clients(name)")
     .order("created_at", { ascending: false });
 
   const list = sources ?? [];
@@ -67,11 +67,18 @@ export default async function DataPrivacyPage() {
               // Supabase types to-one joins as arrays; normalize both shapes.
               const joined = s.clients as { name: string } | { name: string }[] | null;
               const clientName = (Array.isArray(joined) ? joined[0]?.name : joined?.name) ?? "Unknown client";
+              // Which account, so two accounts of one platform can be told apart.
+              const cfg = (s.config ?? {}) as Record<string, unknown>;
+              const chosen = def?.readSelected?.(cfg) ?? null;
+              const account = chosen ? def?.readAccounts?.(cfg).find((a) => a.id === chosen)?.name ?? chosen : null;
               return (
                 <div key={s.id} className={`flex flex-wrap items-center justify-between gap-3 px-[18px] py-[13px] ${i ? "border-t border-ink-100" : ""}`}>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium text-ink-900">{def?.name ?? getIntegrationName(s.type)}</p>
+                      <p className="text-sm font-medium text-ink-900">
+                        {def?.name ?? getIntegrationName(s.type)}
+                        {account && <span className="font-normal text-ink-500"> · {account}</span>}
+                      </p>
                       <Badge variant="muted">{clientName}</Badge>
                     </div>
                     <p className="mt-0.5 text-[12.5px] text-ink-400">
@@ -81,7 +88,7 @@ export default async function DataPrivacyPage() {
                         : "Not synced yet"}
                     </p>
                   </div>
-                  <DisconnectSource dataSourceId={s.id} label={`${def?.name ?? getIntegrationName(s.type)} for ${clientName}`} />
+                  <DisconnectSource dataSourceId={s.id} label={`${def?.name ?? getIntegrationName(s.type)}${account ? ` (${account})` : ""} for ${clientName}`} />
                 </div>
               );
             })}

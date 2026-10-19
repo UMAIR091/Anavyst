@@ -10,7 +10,7 @@
 import JSZip from "jszip";
 import type { IntegrationAccount, OAuthProvider, TokenSet } from "../types";
 import { adWindows, adsTotals, windowFields, withRetry, type AdsDay, type AdsReport } from "../metrics";
-import { getGoogleEmail } from "@/lib/google";
+import { getGoogleEmail, getGoogleSubject } from "@/lib/google";
 import { UserFacingError } from "@/lib/errors";
 
 // Microsoft Advertising accepts two identity providers (see the v13 auth docs):
@@ -178,6 +178,19 @@ export const microsoftAdsOAuth: OAuthProvider = {
       return tag(xml, "UserName") || tag(xml, "Name") || "Microsoft Ads account";
     } catch {
       return "Microsoft Ads account";
+    }
+  },
+  async subject(accessToken, ctx) {
+    if (ctx?.provider === PROVIDER_GOOGLE) return getGoogleSubject(accessToken);
+    try {
+      const xml = await soapCall(CUSTOMER_MGMT, CM_NS, "GetUser", accessToken, "", `<GetUserRequest xmlns="${CM_NS}"><UserId i:nil="true"/></GetUserRequest>`, ctx?.provider);
+      // The User's own Id follows its ContactInfo, whose address has an Id of
+      // its own, so read past it.
+      const user = xml.split(/<\/(?:\w+:)?ContactInfo>/)[1] ?? "";
+      const id = tag(user, "Id");
+      return id && /^\d+$/.test(id) ? `msads:${id}` : null;
+    } catch {
+      return null;
     }
   },
   callbackPath: "/api/microsoft/callback",

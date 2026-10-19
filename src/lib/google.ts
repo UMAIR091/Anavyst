@@ -100,6 +100,19 @@ export async function getGoogleEmail(accessToken: string): Promise<string> {
   return data.email ?? "google account";
 }
 
+// The Google account's permanent id (userinfo v2 `id`, the OpenID `sub`):
+// unlike the email, it never changes and is never reused.
+export async function getGoogleSubject(accessToken: string): Promise<string | null> {
+  try {
+    const res = await fetch(USERINFO, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data.id === "string" && data.id ? `google:${data.id}` : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function listGscSites(accessToken: string): Promise<string[]> {
   const res = await fetch(`${GSC}/sites`, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`Listing Search Console sites failed: ${await res.text()}`);

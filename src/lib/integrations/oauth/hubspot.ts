@@ -71,6 +71,18 @@ export const hubspotOAuth: OAuthProvider = {
       return "HubSpot account";
     }
   },
+
+  // A HubSpot token belongs to one user in one portal.
+  async subject(accessToken) {
+    try {
+      const res = await fetch(`${API}/oauth/v1/access-tokens/${accessToken}`);
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => ({}));
+      return data.hub_id && data.user_id ? `hubspot:${data.hub_id}:${data.user_id}` : null;
+    } catch {
+      return null;
+    }
+  },
   callbackPath: "/api/hubspot/callback",
 };
 

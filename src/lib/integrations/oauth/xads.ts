@@ -117,7 +117,9 @@ export async function xRequestToken(): Promise<{ token: string; secret: string; 
 }
 
 // Step 3: exchange the verifier for a permanent access token + secret.
-export async function xAccessToken(requestToken: string, requestSecret: string, verifier: string): Promise<{ token: string; secret: string }> {
+export async function xAccessToken(
+  requestToken: string, requestSecret: string, verifier: string
+): Promise<{ token: string; secret: string; userId: string | null }> {
   const url = `${OAUTH_BASE}/access_token`;
   const res = await fetch(url, {
     method: "POST",
@@ -129,7 +131,8 @@ export async function xAccessToken(requestToken: string, requestSecret: string, 
   if (!res.ok) throw new Error(`X access_token failed: ${text.slice(0, 200)} (${res.status})`);
   const data = parseForm(text);
   if (!data.oauth_token || !data.oauth_token_secret) throw new Error("X access_token returned no token");
-  return { token: data.oauth_token, secret: data.oauth_token_secret };
+  // user_id: the X account's permanent id, returned with every access token.
+  return { token: data.oauth_token, secret: data.oauth_token_secret, userId: data.user_id || null };
 }
 
 // The stored credential is "<token>:<secret>" — X tokens/secrets are base64-ish

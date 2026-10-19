@@ -109,8 +109,8 @@ const AUGUST_SYNC = "2026-08-29T06:38:00+00:00";
 
 type Stored = {
   gsc: { totals: { clicks: number }; previousTotals: { clicks: number } | null } | null;
-  blocks: { sourceId: string; notes?: string[]; kpis: { label: string; value: number | null; previous: number | null }[] }[];
-  meta: { sourceIds: string[]; sources: { type: string; included: boolean; state: string }[] };
+  blocks: { sourceId: string; sourceName?: string; instanceId?: string; notes?: string[]; kpis: { label: string; value: number | null; previous: number | null }[] }[];
+  meta: { sourceIds: string[]; sources: { type: string; name?: string; included: boolean; state: string }[] };
 };
 
 describe("rolling reports use only sources whose data describes the period", () => {
@@ -244,5 +244,61 @@ describe("rebuilt periods", () => {
     const data = s.inserted[0].data as Stored;
     expect(data.blocks[0].kpis.find((k) => k.label === "Spend")).toMatchObject({ value: 280 });
     expect(data.meta.sources[0]).toMatchObject({ type: "meta_ads", included: true, state: "ok" });
+  });
+});
+
+describe("two accounts of one platform (migration 0049)", () => {
+  const twoMeta = (stale = false) =>
+    stub({
+      sources: [
+        { id: "ds-uk", type: "meta_ads", status: "connected", config: { accounts: [{ id: "act_1", name: "Acme UK" }], account_id: "act_1" } },
+        { id: "ds-us", type: "meta_ads", status: "connected", config: { accounts: [{ id: "act_2", name: "Acme US" }], account_id: "act_2" } },
+      ],
+      integrations: {
+        "ds-uk": { data: adsSnapshot("2026-09-14", "2026-10-11", 10), synced_at: FRESH },
+        "ds-us": stale
+          ? { data: adsSnapshot("2026-08-01", "2026-08-28", 99), synced_at: AUGUST_SYNC }
+          : { data: adsSnapshot("2026-09-14", "2026-10-11", 20), synced_at: FRESH },
+      },
+    });
+
+  it("reports each account as its own section, named by account", async () => {
+    const s = twoMeta();
+    adminDb.client = s.client;
+    const res = await createClientReport(s.client, "a1", "c1", { now: NOW, period: "last_28" });
+    expect(res.ok).toBe(true);
+    const data = s.inserted[0].data as Stored;
+    expect(data.blocks.map((b) => [b.sourceId, b.instanceId, b.sourceName])).toEqual([
+      ["meta_ads", "ds-uk", "Meta Ads · Acme UK"],
+      ["meta_ads", "ds-us", "Meta Ads · Acme US"],
+    ]);
+    // Each keeps its own figures; nothing is mixed between the two.
+    const spend = (i: number) => data.blocks[i].kpis.find((k) => k.label === "Spend")?.value;
+    expect([spend(0), spend(1)]).toEqual([280, 560]);
+    // The platform is named once among the report's sources.
+    expect(data.meta.sourceIds).toEqual(["meta_ads"]);
+  });
+
+  it("names the account when one of the two is left out", async () => {
+    const s = twoMeta(true);
+    adminDb.client = s.client;
+    await createClientReport(s.client, "a1", "c1", { now: NOW, period: "last_28" });
+    const data = s.inserted[0].data as Stored;
+    expect(data.meta.sources.map((x) => [x.name, x.included])).toEqual([
+      ["Meta Ads · Acme UK", true],
+      ["Meta Ads · Acme US", false],
+    ]);
+  });
+
+  it("leaves a single-account report exactly as before", async () => {
+    const s = stub({
+      sources: [{ id: "ds-uk", type: "meta_ads", status: "connected", config: { accounts: [{ id: "act_1", name: "Acme UK" }], account_id: "act_1" } }],
+      integrations: { "ds-uk": { data: adsSnapshot("2026-09-14", "2026-10-11", 10), synced_at: FRESH } },
+    });
+    adminDb.client = s.client;
+    await createClientReport(s.client, "a1", "c1", { now: NOW, period: "last_28" });
+    const data = s.inserted[0].data as Stored;
+    expect(data.blocks[0]).toMatchObject({ sourceId: "meta_ads", sourceName: "Meta Ads" });
+    expect(data.blocks[0]).not.toHaveProperty("instanceId");
   });
 });

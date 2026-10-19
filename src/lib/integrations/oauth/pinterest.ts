@@ -110,6 +110,16 @@ export const pinterestOAuth: OAuthProvider = {
       return "Pinterest account";
     }
   },
+
+  // The user account's id; a username can be changed, so it isn't used.
+  async subject(accessToken) {
+    try {
+      const data = await pinGet<{ id?: string }>("/user_account", accessToken);
+      return data.id ? `pinterest:${data.id}` : null;
+    } catch {
+      return null;
+    }
+  },
   callbackPath: "/api/pinterest/callback",
 };
 

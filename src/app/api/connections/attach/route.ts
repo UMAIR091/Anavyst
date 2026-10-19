@@ -3,10 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentUserAndAgency } from "@/lib/agency";
 import { getIntegration, isLive } from "@/lib/integrations/registry";
-import { isShareable, type ConnectionTokens } from "@/lib/integrations/connections";
+import { isShareable, placeSource, type ConnectionTokens } from "@/lib/integrations/connections";
 import { getValidAccessToken } from "@/lib/googleTokens";
 import { syncDataSource, type SyncableSource } from "@/lib/sync";
-import { checkIntegrationLimit } from "@/lib/billing/limits";
 import { revalidateIntegrationHealth } from "@/lib/integrationHealth";
 import { logError } from "@/lib/errorLog";
 import { publicMessage } from "@/lib/errors";
@@ -55,30 +54,18 @@ export async function POST(req: Request) {
   const def = getIntegration(conn.type as string);
   if (!def || !isLive(def.id) || !isShareable(def)) return fail("That sign-in can't be shared.");
 
-  // A client already on this integration is switching sign-ins, not adding one.
-  const { data: existing } = await supabase
-    .from("data_sources")
-    .select("id")
-    .eq("client_id", clientId)
-    .eq("type", def.id)
-    .maybeSingle();
-  if (!existing) {
-    const limit = await checkIntegrationLimit(supabase, client.agency_id as string, clientId);
-    if (!limit.allowed) return fail(limit.reason ?? "Integration limit reached.");
-  }
-
   try {
     // Tokens are service-role only; the RLS read above authorized this id.
     const { data: tokens } = await createAdminClient()
       .from("connections")
-      .select("id, identity_provider, access_token, refresh_token, token_expires_at, status")
+      .select("id, agency_id, type, client_id, identity_provider, access_token, refresh_token, token_expires_at, status")
       .eq("id", conn.id)
       .single();
     const connection = tokens as ConnectionTokens;
     const provider = connection.identity_provider ?? undefined;
 
     const accessToken = await getValidAccessToken({
-      id: existing?.id ?? conn.id,
+      id: conn.id,
       type: def.id,
       config: { identity_provider: provider },
       connection,
@@ -87,26 +74,19 @@ export async function POST(req: Request) {
     const config: IntegrationConfig = def.buildConfig!(accounts);
     if (provider) config.identity_provider = provider;
 
-    const { data: source, error } = await supabase
-      .from("data_sources")
-      .upsert(
-        {
-          agency_id: client.agency_id,
-          client_id: clientId,
-          type: def.id,
-          connection_id: conn.id,
-          display_name: conn.display_name,
-          config,
-          status: "connected",
-          last_sync_error: null,
-        },
-        { onConflict: "client_id,type" }
-      )
-      .select("id, agency_id, client_id, type, config, connection_id")
-      .single();
-    if (error) throw new Error(error.message);
+    // One more account of this platform for the client (or its pending one),
+    // found by account (migration 0049); the plan's limit applies to a new row.
+    const source = await placeSource(supabase, {
+      agencyId: client.agency_id as string,
+      clientId,
+      def,
+      connectionId: conn.id as string,
+      displayName: (conn.display_name as string | null) ?? null,
+      config,
+      enforceLimit: true,
+    });
 
-    const selected = def.readSelected?.(config) ?? null;
+    const selected = def.readSelected?.(source.config ?? {}) ?? null;
     if (selected) {
       await syncDataSource(supabase, { ...(source as Omit<SyncableSource, "connection">), connection });
     }

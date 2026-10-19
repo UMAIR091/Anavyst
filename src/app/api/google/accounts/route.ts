@@ -53,6 +53,20 @@ export async function POST(req: Request) {
 
   const config: IntegrationConfig = { ...current, ...def.buildConfig(accounts) };
   if (chosen) config[def.accountConfigKey] = chosen;
+  // buildConfig picks a lone account; not one this client already reports on
+  // through another source (migration 0049): leave the choice to the user.
+  const auto = chosen ? null : def.readSelected?.(config) ?? null;
+  if (auto && ds.client_id) {
+    const { data: taken } = await supabase
+      .from("data_sources")
+      .select("id")
+      .eq("client_id", ds.client_id)
+      .eq("type", def.id)
+      .eq("account_key", auto)
+      .neq("id", ds.id)
+      .limit(1);
+    if (taken?.length) config[def.accountConfigKey] = null;
+  }
 
   const { error } = await supabase.from("data_sources").update({ config }).eq("id", dataSourceId);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });

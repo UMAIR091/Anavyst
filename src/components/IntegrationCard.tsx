@@ -31,6 +31,9 @@ export function IntegrationCard({
   lastSyncError = null,
   reconnectBy = null,
   sharedWith = 0,
+  sameSignInHere = 0,
+  accountLabel = null,
+  allowsMultiple = false,
 }: {
   descriptor: IntegrationDescriptor;
   clientId: string;
@@ -42,6 +45,13 @@ export function IntegrationCard({
   reconnectBy?: string | null;
   /** Other clients using the same saved sign-in (shared agency sign-ins). */
   sharedWith?: number;
+  /** This client's other accounts of the platform on the same sign-in. */
+  sameSignInHere?: number;
+  /** Shown next to the name when the client has more than one account of
+   *  this platform, to tell the cards apart. */
+  accountLabel?: string | null;
+  /** The platform takes more than one account per client (migration 0049). */
+  allowsMultiple?: boolean;
 }) {
   const router = useRouter();
   const [account, setAccount] = useState(source?.selectedAccountId ?? "");
@@ -100,6 +110,22 @@ export function IntegrationCard({
   }
 
   async function saveAccount() {
+    // Switching a working source to another account: it then reports on that
+    // one, and what it stored for the old one is cleared (so a report never
+    // mixes the two). Adding the account alongside keeps both.
+    const current = source!.selectedAccountId;
+    if (current && account !== current) {
+      const from = source!.accounts.find((a) => a.id === current)?.name ?? current;
+      const to = source!.accounts.find((a) => a.id === account)?.name ?? account;
+      const ok = await confirm({
+        title: `Switch to ${to}?`,
+        description: `This ${noun} will report on ${to} instead of ${from}, and the data stored for ${from} here is removed.${
+          allowsMultiple ? ` To report on both, use “Add another ${noun}” instead.` : ""
+        } Reports you’ve already generated are kept.`,
+        confirmLabel: "Switch",
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     const res = await fetch("/api/google/save-property", {
       method: "POST",
@@ -107,8 +133,13 @@ export function IntegrationCard({
       body: JSON.stringify({ dataSourceId: source!.id, accountId: account }),
     });
     setBusy(false);
-    if (!res.ok) return toast.error((await res.json()).error ?? "Failed to save");
-    toast.success(`${noun.charAt(0).toUpperCase() + noun.slice(1)} saved`);
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return toast.error(json.error ?? "Failed to save");
+    toast.success(
+      json.merged
+        ? `That ${noun} was already connected for this client. It now uses this sign-in.`
+        : `${noun.charAt(0).toUpperCase() + noun.slice(1)} saved`
+    );
     router.refresh();
   }
 
@@ -133,10 +164,14 @@ export function IntegrationCard({
   }
 
   async function disconnect() {
-    const description =
-      sharedWith > 0
-        ? `This removes ${descriptor.name} and its cached data from this client only. The sign-in stays for the ${sharedWith} other client${sharedWith === 1 ? "" : "s"} that use it. Reports you’ve already generated are kept.`
-        : "This removes the connection and its cached data for this client, and deletes the saved sign-in. Reports you’ve already generated are kept.";
+    const what = accountLabel ? `${descriptor.name} (${accountLabel})` : descriptor.name;
+    const keeps = [
+      sharedWith > 0 ? `the ${sharedWith} other client${sharedWith === 1 ? "" : "s"} that use it` : null,
+      sameSignInHere > 0 ? `this client’s other ${noun}${sameSignInHere === 1 ? "" : "s"} on it` : null,
+    ].filter(Boolean);
+    const description = keeps.length
+      ? `This removes ${what} and its cached data from this client only. The sign-in stays for ${keeps.join(" and ")}. Reports you’ve already generated are kept.`
+      : "This removes the connection and its cached data for this client, and deletes the saved sign-in. Reports you’ve already generated are kept.";
     if (!(await confirm({ title: `Disconnect ${descriptor.name}?`, description, confirmLabel: "Disconnect", destructive: true }))) return;
     setBusy(true);
     await fetch("/api/google/disconnect", {
@@ -158,7 +193,10 @@ export function IntegrationCard({
               <Icon size={18} />
             </div>
             <div>
-              <p className="font-medium text-ink-900">{descriptor.name}</p>
+              <p className="font-medium text-ink-900">
+                {descriptor.name}
+                {accountLabel && <span className="font-normal text-ink-500"> · {accountLabel}</span>}
+              </p>
               {/* The header line must not read as a working connection while
                   the source cannot sync (P0-4). */}
               <p className="text-sm text-ink-500">
@@ -177,6 +215,11 @@ export function IntegrationCard({
               <Button asChild size="sm">
                 <a href={connectHref}>Reconnect</a>
               </Button>
+            )}
+            {allowsMultiple && source.selectedAccountId && (
+              <a href={connectHref} className="text-xs font-medium text-brand-600 hover:underline">
+                Add another {noun}
+              </a>
             )}
             <button onClick={disconnect} disabled={busy} className="text-xs text-ink-500 transition-colors hover:text-danger-600 disabled:opacity-50">
               Disconnect

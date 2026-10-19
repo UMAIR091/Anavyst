@@ -3,7 +3,7 @@
 // machinery — only the consent scopes differ), mirroring how instagramOAuth
 // varies metaOAuth. Wraps the pure helpers in lib/google.ts so the redirect
 // URI stays in one place.
-import { getAuthUrl, exchangeCode, refreshAccessToken, getGoogleEmail, revokeGoogleToken } from "@/lib/google";
+import { getAuthUrl, exchangeCode, refreshAccessToken, getGoogleEmail, getGoogleSubject, revokeGoogleToken } from "@/lib/google";
 import type { OAuthProvider } from "../types";
 
 // openid+email are always included so identity() can label the connection.
@@ -15,6 +15,7 @@ function googleVariant(id: string, extraScopes: string[]): OAuthProvider {
     exchangeCode: (code) => exchangeCode(code),
     refresh: (refreshToken) => refreshAccessToken(refreshToken),
     identity: (accessToken) => getGoogleEmail(accessToken),
+    subject: (accessToken) => getGoogleSubject(accessToken),
     // Revoke the whole grant via the refresh token when present (falls back to
     // the access token). Best-effort — disconnect proceeds even if this fails.
     revoke: ({ accessToken, refreshToken }) => {

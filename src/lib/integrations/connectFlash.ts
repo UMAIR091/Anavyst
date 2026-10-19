@@ -9,12 +9,15 @@
 export const CONNECT_FLASH_COOKIE = "connect_flash";
 export const CONNECT_FLASH_MAX_AGE = 120; // seconds
 
-export type ConnectFlash = { account: string | null; identity: string | null };
+// `note`: what a renewal of a shared sign-in did ("Renewed for 4 sources; 1
+// ad account still needs access").
+export type ConnectFlash = { account: string | null; identity: string | null; note?: string | null };
 
 const clip = (s: unknown) => (typeof s === "string" && s.trim() ? s.trim().slice(0, 120) : null);
 
 export function encodeConnectFlash(flash: ConnectFlash): string {
-  const json = JSON.stringify({ account: clip(flash.account), identity: clip(flash.identity) });
+  const note = clip(flash.note);
+  const json = JSON.stringify({ account: clip(flash.account), identity: clip(flash.identity), ...(note ? { note } : {}) });
   const bin = Array.from(new TextEncoder().encode(json), (b) => String.fromCharCode(b)).join("");
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -24,16 +27,17 @@ export function decodeConnectFlash(value: string | null | undefined): ConnectFla
   try {
     const bin = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
     const parsed = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
-    const flash = { account: clip(parsed?.account), identity: clip(parsed?.identity) };
-    return flash.account || flash.identity ? flash : null;
+    const note = clip(parsed?.note);
+    const flash: ConnectFlash = { account: clip(parsed?.account), identity: clip(parsed?.identity), ...(note ? { note } : {}) };
+    return flash.account || flash.identity || flash.note ? flash : null;
   } catch {
     return null;
   }
 }
 
-// The toast's second line: which account, and as whom.
+// The toast's second line: which account, as whom, and what a renewal did.
 export function describeConnectFlash(flash: ConnectFlash | null): string | undefined {
   if (!flash) return undefined;
-  const parts = [flash.account, flash.identity ? `signed in as ${flash.identity}` : null].filter(Boolean);
+  const parts = [flash.account, flash.identity ? `signed in as ${flash.identity}` : null, flash.note].filter(Boolean);
   return parts.length ? parts.join(" · ") : undefined;
 }
