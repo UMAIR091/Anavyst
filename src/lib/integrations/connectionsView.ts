@@ -84,8 +84,15 @@ export function expiryOf(c: ConnectionRow, platform: string, now: number): Expir
   if (deadline) {
     return { kind: "renews_until", date: deadline, confirmed: true, note: `Renews automatically until then; ${platform} then needs a fresh sign-in` };
   }
-  return { kind: "renews", date: null, confirmed: false, note: `Renews automatically; ${platform} doesn't say when it ends` };
+  // LinkedIn and Pinterest send their refresh token's end date with each
+  // token; a sign-in saved before Anavyst recorded it learns it at its next
+  // renewal. The others give none.
+  return SENDS_REFRESH_END.has(c.type)
+    ? { kind: "renews", date: null, confirmed: false, note: `Renews automatically; the end date isn't known yet (${platform} sends it at the next renewal)` }
+    : { kind: "renews", date: null, confirmed: false, note: `Renews automatically; ${platform} doesn't give an end date` };
 }
+
+const SENDS_REFRESH_END = new Set(["linkedin_ads", "pinterest_ads"]);
 
 export function buildConnectionsView(input: {
   connections: ConnectionRow[];
