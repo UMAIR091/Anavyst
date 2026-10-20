@@ -46,6 +46,9 @@ export type WorkspaceIntegration = {
   reconnectBy: string | null;
   /** How many OTHER clients use the same saved sign-in (migration 0046). */
   sharedWith: number;
+  /** Other clients of the agency with this same account connected: their
+   *  reports show the same figures (warned, never blocked). */
+  alsoOn: string[];
   /** This client's other accounts of the same platform on the same sign-in. */
   sameSignInHere: number;
   /** The chosen account's name, when one is chosen. */
@@ -86,6 +89,7 @@ type DsRow = {
   last_sync_error: string | null;
   connection_id: string | null;
   created_at?: string | null;
+  account_key?: string | null;
   connection: SignInRow | SignInRow[] | null;
 };
 
@@ -113,7 +117,7 @@ export async function loadClientWorkspace(
   const { data: dsRows } = await supabase
     .from("data_sources")
     .select(
-      "id, type, display_name, config, status, last_synced_at, last_sync_error, connection_id, created_at, " +
+      "id, type, display_name, config, status, last_synced_at, last_sync_error, connection_id, created_at, account_key, " +
         "connection:connections!data_sources_connection_fkey(identity_provider, token_expires_at, refresh_expires_at)"
     )
     .eq("client_id", clientId)
@@ -121,6 +125,29 @@ export async function loadClientWorkspace(
   const rows = (dsRows ?? []) as unknown as DsRow[];
   const dsByType = new Map<string, DsRow[]>();
   for (const d of rows) dsByType.set(d.type, [...(dsByType.get(d.type) ?? []), d]);
+
+  // The same account attached to another of the agency's clients.
+  const keyed = rows.filter((d) => d.account_key);
+  const alsoOn = new Map<string, string[]>();
+  if (keyed.length) {
+    const { data: same } = await supabase
+      .from("data_sources")
+      .select("client_id, type, account_key")
+      .in("type", [...new Set(keyed.map((d) => d.type))])
+      .in("account_key", [...new Set(keyed.map((d) => d.account_key!))])
+      .neq("client_id", clientId);
+    const matches = ((same ?? []) as { client_id: string | null; type: string; account_key: string }[]).filter((o) =>
+      keyed.some((d) => d.type === o.type && d.account_key === o.account_key)
+    );
+    const ids = [...new Set(matches.map((m) => m.client_id).filter((id): id is string => Boolean(id)))];
+    const { data: names } = ids.length ? await supabase.from("clients").select("id, name").in("id", ids) : { data: [] };
+    const nameOf = new Map(((names ?? []) as { id: string; name: string | null }[]).map((c) => [c.id, c.name ?? "another client"]));
+    for (const m of matches) {
+      const k = `${m.type}\u0000${m.account_key}`;
+      const n = m.client_id ? nameOf.get(m.client_id) : undefined;
+      if (n) alsoOn.set(k, [...new Set([...(alsoOn.get(k) ?? []), n])]);
+    }
+  }
 
   // How many other clients share each saved sign-in this client uses.
   const signInIds = [...new Set(rows.map((d) => d.connection_id).filter((id): id is string => Boolean(id)))];
@@ -204,6 +231,7 @@ export async function loadClientWorkspace(
       sameSignInHere: ds?.connection_id ? sameType.filter((o) => o.id !== ds.id && o.connection_id === ds.connection_id).length : 0,
       accountLabel: selectedAccountId ? accounts.find((a) => a.id === selectedAccountId)?.name ?? selectedAccountId : null,
       siblings: ds ? sameType.length - 1 : 0,
+      alsoOn: ds?.account_key ? alsoOn.get(`${ds.type}\u0000${ds.account_key}`) ?? [] : [],
       allowsMultiple: allowsMultipleAccounts(def),
     };
   };

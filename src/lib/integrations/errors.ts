@@ -53,6 +53,31 @@ export function classifyIntegrationError(err: unknown): IntegrationErrorKind {
   return "transient";
 }
 
+// The provider has locked or checkpointed the ACCOUNT behind a sign-in (Meta:
+// "You cannot access the app till you log in to www.facebook.com and follow
+// the instructions given", or a security checkpoint), seen 19 Oct 2026 on a
+// live Instagram source. The token isn't dead: once the person clears the
+// check on the platform the same sign-in works again, so this is not a
+// reconnect, and saying so stops agencies reconnecting for nothing.
+const ACCOUNT_LOCK_SIGNALS: RegExp[] = [
+  /log in to www\.facebook\.com and follow the instructions/i,
+  /\bcheckpoint/i,
+  /error_subcode\D*(?:459|464)\b/i, // Meta: user checkpointed / unconfirmed
+];
+
+export function isAccountLockedError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return ACCOUNT_LOCK_SIGNALS.some((re) => re.test(message));
+}
+
+export function accountLockedMessage(providerName: string, identity?: string | null): string {
+  const platform = providerName.startsWith("Instagram") || providerName.startsWith("Meta") ? "Facebook" : providerName;
+  return (
+    `${platform} has locked the account behind this sign-in${identity ? ` (${identity})` : ""} until it completes a security check. ` +
+    `Log in at ${platform === "Facebook" ? "facebook.com" : `${platform}`} and follow the steps there, then click Refresh now. No reconnect is needed.`
+  );
+}
+
 // A short, safe, user-facing sentence for the dashboard. Never leaks tokens or
 // raw provider payloads — the detailed provider text stays in last_sync_error
 // for the owner's own diagnostics only when it's not sensitive.

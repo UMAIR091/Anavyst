@@ -199,7 +199,34 @@ export function descriptor(d: IntegrationDef): IntegrationDescriptor {
     // components don't have to re-derive it from status + connectPath.
     accent: d.accent, status: effectiveStatus(d), connectPath: d.connectPath, accountNoun: d.accountNoun,
     connectable: isConnectable(d),
+    revokesAtProvider: Boolean(getOAuthProvider(d.oauthProviderId)?.revoke),
+    accessSettings: accessSettingsFor(d),
   };
+}
+
+// Where a person removes Anavyst from their own platform account. Only pages
+// confirmed to exist get a link; for the rest the place is named. Used where
+// Anavyst can't cancel the access itself (no official revoke API), so removing
+// a connection in Anavyst is honest about what stays at the platform.
+const GOOGLE_ACCESS = { label: "Google account permissions", url: "https://myaccount.google.com/permissions" };
+const ACCESS_SETTINGS: Record<string, { label: string; url: string | null }> = {
+  gsc: GOOGLE_ACCESS, ga4: GOOGLE_ACCESS, google_ads: GOOGLE_ACCESS, gbp: GOOGLE_ACCESS,
+  sheets: GOOGLE_ACCESS, youtube_analytics: GOOGLE_ACCESS, bigquery: GOOGLE_ACCESS,
+  meta_ads: { label: "Facebook settings, Business integrations", url: "https://www.facebook.com/settings/?tab=business_tools" },
+  instagram: { label: "Facebook settings, Business integrations (or Instagram settings, Apps and websites)", url: "https://www.facebook.com/settings/?tab=business_tools" },
+  linkedin_ads: { label: "LinkedIn settings, Data privacy, Permitted services", url: "https://www.linkedin.com/psettings/permitted-services" },
+  snapchat_ads: { label: "the apps page of the Snapchat account at accounts.snapchat.com", url: "https://accounts.snapchat.com" },
+  x_ads: { label: "X settings, Connected apps", url: "https://x.com/settings/connected_apps" },
+  microsoft_ads: { label: "the Microsoft (or Google) account's app permissions", url: null },
+  shopify: { label: "the store's Shopify admin, Apps", url: null },
+  woocommerce: { label: "WooCommerce, Settings, Advanced, REST API (delete the key)", url: null },
+};
+
+export function accessSettingsFor(d: IntegrationDef): { label: string; url: string | null } {
+  if (ACCESS_SETTINGS[d.id]) return ACCESS_SETTINGS[d.id];
+  return d.authKind === "apikey"
+    ? { label: `${d.name} settings (delete or rotate the API key)`, url: null }
+    : { label: `${d.name} account settings (connected apps)`, url: null };
 }
 
 export type { IntegrationDef, IntegrationDescriptor, IntegrationAccount } from "./types";

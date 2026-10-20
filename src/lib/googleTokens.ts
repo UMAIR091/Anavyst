@@ -6,6 +6,7 @@ import { oauthForType } from "@/lib/integrations/registry";
 import { EXPIRY_BUFFER_MS, renewAheadMs } from "@/lib/integrations/tokenRenewal";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ConnectionTokens } from "@/lib/integrations/connections";
+import { logError } from "@/lib/errorLog";
 
 type DataSourceRow = {
   id: string;
@@ -181,6 +182,15 @@ export async function getValidAccessToken(ds: DataSourceRow): Promise<string> {
         await releaseLock(h, lockId);
         if (stillUsable) {
           console.error(`[tokens] early renewal failed for ${h.type ?? "source"} ${h.table}/${h.id}: ${(err as Error).message}`);
+          // Recorded for the error log too: a renewal that keeps failing would
+          // otherwise only surface when the token finally expires.
+          await logError({
+            context: "sync",
+            provider: h.type ?? null,
+            errorType: "transient",
+            message: `early token renewal failed (current token still valid): ${(err as Error).message}`,
+            retryStatus: "will_retry",
+          }).catch(() => undefined);
           return decrypt(current);
         }
         throw err;

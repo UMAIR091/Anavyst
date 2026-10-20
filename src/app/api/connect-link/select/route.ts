@@ -4,6 +4,7 @@ import { getIntegration } from "@/lib/integrations/registry";
 import { loadOneSyncable } from "@/lib/integrations/connections";
 import { syncDataSource } from "@/lib/sync";
 import { revalidateIntegrationHealth } from "@/lib/integrationHealth";
+import { logConnectionEvent } from "@/lib/integrations/connectionEvents";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
 import { isLinkToken, linkConnectable, loadConnectLink } from "@/lib/connectLinks";
 import type { IntegrationConfig } from "@/lib/integrations/types";
@@ -98,5 +99,10 @@ export async function POST(req: Request) {
   const source = await loadOneSyncable(syncId);
   if (source) await syncDataSource(admin, source);
   revalidateIntegrationHealth(link.agencyId);
+  await logConnectionEvent({
+    agencyId: link.agencyId, action: "select_account", actor: "client", clientId: link.clientId,
+    connectionId: pending.connection_id, dataSourceId: syncId, platform: def.id,
+    detail: { account: def.readAccounts(config).find((a) => a.id === accountId)?.name ?? accountId, mergedIntoExisting: Boolean(taken) },
+  });
   return page(`connected=${encodeURIComponent(def.id)}`);
 }

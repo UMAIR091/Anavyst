@@ -17,6 +17,7 @@ import { logDetail, publicMessage } from "@/lib/errors";
 import { checkIntegrationLimit } from "@/lib/billing/limits";
 import type { IntegrationDef, OAuthProvider } from "./types";
 import { saveSignIn, type DuplicateMatch } from "./connections";
+import { logConnectionEvent } from "./connectionEvents";
 import { CONNECT_FLASH_COOKIE, CONNECT_FLASH_MAX_AGE, encodeConnectFlash, type ConnectFlash } from "./connectFlash";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
@@ -134,7 +135,12 @@ async function completeLinkCallback(args: {
       errorType: classifyIntegrationError(err),
       message: logDetail(err),
     });
-    return page(`error=${encodeURIComponent(publicMessage(err, `Couldn't connect ${def.name}. Please try again.`, { provider: def.id }))}`);
+    const shown = publicMessage(err, `Couldn't connect ${def.name}. Please try again.`, { provider: def.id });
+    await logConnectionEvent({
+      agencyId: link.agencyId, action: "client_connect", actor: "client", outcome: "failed", clientId: link.clientId,
+      platform: def.id, detail: { error: shown, route: args.provider ?? null },
+    });
+    return page(`error=${encodeURIComponent(shown)}`);
   }
 }
 
@@ -353,7 +359,12 @@ export async function handleCallback(req: Request): Promise<Response> {
       errorType: classifyIntegrationError(err),
       message: logDetail(err),
     });
-    return fail(publicMessage(err, `Couldn't connect ${def.name}. Please try again.`, { provider: def.id }));
+    const shown = publicMessage(err, `Couldn't connect ${def.name}. Please try again.`, { provider: def.id });
+    await logConnectionEvent({
+      agencyId: agency.id, action: connectionId ? "reconnect" : "connect", outcome: "failed", userId: user.id,
+      clientId, connectionId: connectionId ?? null, platform: def.id, detail: { error: shown, route: provider ?? null },
+    });
+    return fail(shown);
   }
 }
 
@@ -416,6 +427,26 @@ export async function completeOAuthConnect(
     userId: opts.userId,
     clientOwned: opts.clientOwned,
     enforceLimit: true,
+  });
+
+  const chosen = def.readSelected?.(saved.source.config ?? {}) ?? null;
+  await logConnectionEvent({
+    agencyId,
+    action: opts.connectionId ? "reconnect" : opts.clientOwned ? "client_connect" : "connect",
+    actor: opts.clientOwned ? "client" : "user",
+    userId: opts.userId ?? null,
+    clientId,
+    connectionId: saved.connectionId,
+    dataSourceId: saved.source.id,
+    platform: def.id,
+    detail: {
+      signedInAs: typeof identity === "string" ? identity : null,
+      route: provider ?? null,
+      account: chosen ? accounts.find((a) => a.id === chosen)?.name ?? chosen : null,
+      accountsListed: accounts.length,
+      ...(saved.renewal ? { restored: saved.renewal.restored, lacking: saved.renewal.lacking.length } : {}),
+      ...(saved.duplicate ? { looksLike: saved.duplicate.displayName ?? "a saved sign-in", proven: saved.duplicate.strong } : {}),
+    },
   });
 
   for (const source of saved.clientSources) {

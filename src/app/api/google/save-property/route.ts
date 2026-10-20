@@ -4,6 +4,7 @@ import { syncDataSource } from "@/lib/sync";
 import { loadOneSyncable } from "@/lib/integrations/connections";
 import { getIntegration } from "@/lib/integrations/registry";
 import { revalidateIntegrationHealth } from "@/lib/integrationHealth";
+import { logConnectionEvent } from "@/lib/integrations/connectionEvents";
 import type { IntegrationConfig } from "@/lib/integrations/types";
 
 export const runtime = "nodejs";
@@ -110,6 +111,11 @@ export async function POST(req: Request) {
   const full = await loadOneSyncable(syncId);
   if (full) await syncDataSource(supabase, full);
   revalidateIntegrationHealth(ds.agency_id);
+  await logConnectionEvent({
+    agencyId: ds.agency_id, action: "select_account", userId: user.id, clientId: ds.client_id, connectionId: ds.connection_id,
+    dataSourceId: syncId, platform: ds.type,
+    detail: { account: name, previous: ds.account_key || null, mergedIntoExisting: merged },
+  });
 
   return NextResponse.json({ ok: true, merged });
 }

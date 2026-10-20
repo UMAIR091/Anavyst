@@ -106,7 +106,10 @@ export default async function ConnectConsentPage(
             </div>
             <p className="mt-1 text-sm text-ink-500">
               Sign in once, then reuse it for every client whose account you can reach with it. Reconnecting a sign-in
-              renews it for all of its clients.
+              renews it for all of its clients.{" "}
+              <Link href="/dashboard/connections" className="font-medium text-brand-600 hover:underline">
+                Manage all sign-ins
+              </Link>
             </p>
             <ul className="mt-4 divide-y divide-ink-100 rounded-xl border border-ink-200">
               {savedSignIns.map((s) => (

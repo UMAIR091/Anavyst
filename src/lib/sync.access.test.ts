@@ -138,3 +138,17 @@ describe("a sign-in saved before who-signed-in was recorded", () => {
     expect(state.subject).not.toHaveBeenCalled();
   });
 });
+
+describe("a platform that locked the account behind a sign-in", () => {
+  it("says how to recover, retries, and leaves the shared sign-in alone", async () => {
+    state.fetchSnapshot.mockRejectedValue(new Error("Meta API error: You cannot access the app till you log in to www.facebook.com and follow the instructions given."));
+    const res = await syncDataSource(db.client(), source());
+    expect(res.ok).toBe(false);
+    expect(row("ds-1").status).toBe("error");
+    expect(row("ds-1").last_sync_error).toMatch(/^Facebook has locked the account behind this sign-in/);
+    expect(row("ds-1").last_sync_error).toContain("No reconnect is needed");
+    expect(db.connection("s1")!.status).toBe("connected");
+    expect(row("ds-2").status).toBe("connected");
+    expect(state.listAccounts).not.toHaveBeenCalled();
+  });
+});

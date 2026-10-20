@@ -7,6 +7,7 @@ import { isShareable, placeSource, type ConnectionTokens } from "@/lib/integrati
 import { getValidAccessToken } from "@/lib/googleTokens";
 import { syncDataSource, type SyncableSource } from "@/lib/sync";
 import { revalidateIntegrationHealth } from "@/lib/integrationHealth";
+import { logConnectionEvent } from "@/lib/integrations/connectionEvents";
 import { logError } from "@/lib/errorLog";
 import { publicMessage } from "@/lib/errors";
 import { CONNECT_FLASH_COOKIE, CONNECT_FLASH_MAX_AGE, encodeConnectFlash } from "@/lib/integrations/connectFlash";
@@ -91,6 +92,11 @@ export async function POST(req: Request) {
       await syncDataSource(supabase, { ...(source as Omit<SyncableSource, "connection">), connection });
     }
     revalidateIntegrationHealth(client.agency_id as string);
+    await logConnectionEvent({
+      agencyId: client.agency_id as string, action: "attach", userId: user.id, clientId, connectionId: conn.id as string,
+      dataSourceId: source.id, platform: def.id,
+      detail: { signedInAs: (conn.display_name as string | null) ?? null, account: selected ? accounts.find((a) => a.id === selected)?.name ?? selected : null },
+    });
 
     const res = NextResponse.redirect(`${base}/dashboard/clients/${clientId}/data-sources?connected=${def.id}`, 303);
     res.cookies.set(

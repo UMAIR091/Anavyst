@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeShopDomain, verifyShopifyWebhook } from "@/lib/integrations/oauth/shopify";
 import { revalidateIntegrationHealth } from "@/lib/integrationHealth";
 import { logError } from "@/lib/errorLog";
+import { logConnectionEvent } from "@/lib/integrations/connectionEvents";
 
 export const runtime = "nodejs";
 
@@ -62,6 +63,12 @@ export async function POST(req: Request) {
       }
     } else {
       return NextResponse.json({ ok: true });
+    }
+    for (const r of rows) {
+      await logConnectionEvent({
+        agencyId: r.agency_id, action: topic === "shop/redact" ? "store_data_deleted" : "store_uninstalled", actor: "provider",
+        connectionId: r.connection_id, dataSourceId: r.id, platform: "shopify", detail: { store: shop },
+      });
     }
     for (const agency of new Set(rows.map((r) => r.agency_id))) revalidateIntegrationHealth(agency);
     return NextResponse.json({ ok: true });

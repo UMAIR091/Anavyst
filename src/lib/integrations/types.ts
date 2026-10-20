@@ -175,4 +175,9 @@ export type IntegrationDescriptor = {
   /** Registry verdict from isConnectable() — true for api-key providers too,
       which are live but carry no connectPath. Never re-derive this in the UI. */
   connectable: boolean;
+  /** Disconnecting the last client on a sign-in also cancels Anavyst's access
+      at the platform (OAuthProvider.revoke: Google, Meta). */
+  revokesAtProvider: boolean;
+  /** Where the person removes Anavyst from their platform account themselves. */
+  accessSettings: { label: string; url: string | null };
 };

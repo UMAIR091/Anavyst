@@ -135,6 +135,7 @@ export default async function ClientDataSourcesPage(props: { params: Promise<{ i
         sameSignInHere={i.sameSignInHere}
         accountLabel={i.siblings > 0 ? i.accountLabel : null}
         allowsMultiple={i.allowsMultiple}
+        alsoOn={i.alsoOn}
       />
     );
 

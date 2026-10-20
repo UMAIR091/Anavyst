@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getValidAccessToken } from "@/lib/googleTokens";
 import { getIntegration, oauthForType } from "@/lib/integrations/registry";
-import { classifyIntegrationError, reconnectMessage } from "@/lib/integrations/errors";
+import { accountLockedMessage, classifyIntegrationError, isAccountLockedError, reconnectMessage } from "@/lib/integrations/errors";
 import { logError } from "@/lib/errorLog";
 import { trackUsage } from "@/lib/usage";
 import { recordDailyMetrics } from "@/lib/metrics/history";
@@ -10,6 +10,7 @@ import { ARCHIVED_CLIENT_ERROR, isSourceClientPaused } from "@/lib/archivedClien
 import { createAdminClient } from "@/lib/supabase/admin";
 import { noAccessMessage, subjectHash, type ConnectionTokens } from "@/lib/integrations/connections";
 import crypto from "node:crypto";
+import { logConnectionEvent } from "@/lib/integrations/connectionEvents";
 
 // Periods we keep warm in the cache (match the report/analytics date ranges).
 // Declared once in lib/reports/periods so the client Performance view, which
@@ -168,6 +169,28 @@ export async function syncDataSource(
     // stay "error" and keep the existing tokens for the next attempt.
     const kind = classifyIntegrationError(err);
 
+    // The platform locked the account behind the sign-in (a Facebook security
+    // check). Nothing to reconnect and nothing to expire for the other clients
+    // on it: the person clears the check on the platform and the same sign-in
+    // works again. Say exactly that, and retry on the next run.
+    if (isAccountLockedError(err)) {
+      const error = accountLockedMessage(def.name);
+      await supabase
+        .from("data_sources")
+        .update({ status: "error", last_sync_error: error, last_sync_attempt_at: attemptedAt, last_sync_failed_at: attemptedAt })
+        .eq("id", ds.id);
+      await logError({
+        context: "sync",
+        agencyId: ds.agency_id,
+        dataSourceId: ds.id,
+        provider: ds.type ?? null,
+        errorType: "transient",
+        message: `account locked by provider: ${message}`,
+        retryStatus: "will_retry",
+      });
+      return { ok: false, error };
+    }
+
     // A shared sign-in serves many accounts. When the provider refuses this
     // one account (Meta wraps a missing ad-account permission in the same
     // OAuthException as a dead token), expiring the sign-in would stop every
@@ -207,6 +230,12 @@ export async function syncDataSource(
     if (kind === "reauth" && connectionId) {
       try {
         const admin = createAdminClient();
+        if (ds.connection?.status !== "revoked") {
+          await logConnectionEvent({
+            agencyId: ds.agency_id, action: "expired", actor: "provider", connectionId, dataSourceId: ds.id,
+            clientId: ds.client_id ?? null, platform: ds.type ?? null, detail: { error: reconnectMessage(def.name) },
+          });
+        }
         await admin.from("connections").update({ status: "revoked" }).eq("id", connectionId);
         await admin
           .from("data_sources")

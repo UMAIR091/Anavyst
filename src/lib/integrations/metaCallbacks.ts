@@ -16,6 +16,7 @@
 import crypto from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { subjectHash } from "./connections";
+import { logConnectionEvent } from "./connectionEvents";
 
 export type MetaSignIn = { route: "facebook" | "instagram"; userId: string };
 
@@ -70,6 +71,7 @@ const REMOVED = "Access was removed in Facebook or Instagram settings. Reconnect
 export async function deauthorizeMetaSignIns(admin: SupabaseClient, who: MetaSignIn): Promise<{ signIns: number; agencies: string[] }> {
   const signIns = await signInsOf(admin, who);
   for (const s of signIns) {
+    await logConnectionEvent({ agencyId: s.agency_id, action: "deauthorized", actor: "provider", connectionId: s.id, platform: who.route === "instagram" ? "instagram" : "meta" });
     await admin.from("connections").update({ status: "revoked" }).eq("id", s.id);
     await admin.from("data_sources").update({ status: "revoked", last_sync_error: REMOVED }).eq("connection_id", s.id);
   }
@@ -88,6 +90,10 @@ export async function deleteMetaSignIns(
     const { data, error } = await admin.from("data_sources").delete().eq("connection_id", s.id).select("id");
     if (error) throw new Error(error.message);
     sources += (data ?? []).length;
+    await logConnectionEvent({
+      agencyId: s.agency_id, action: "data_deleted", actor: "provider", connectionId: s.id,
+      platform: who.route === "instagram" ? "instagram" : "meta", detail: { sources: (data ?? []).length },
+    });
     // Already gone with its last source (migration 0046); this covers a
     // sign-in no source used.
     await admin.from("connections").delete().eq("id", s.id);

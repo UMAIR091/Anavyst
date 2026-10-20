@@ -9,6 +9,7 @@ import { syncDataSource } from "@/lib/sync";
 import { loadSyncable } from "@/lib/integrations/connections";
 import { revalidateIntegrationHealth } from "@/lib/integrationHealth";
 import { logError } from "@/lib/errorLog";
+import { logConnectionEvent } from "@/lib/integrations/connectionEvents";
 import { publicMessage } from "@/lib/errors";
 import { CONNECT_FLASH_COOKIE, CONNECT_FLASH_MAX_AGE, encodeConnectFlash } from "@/lib/integrations/connectFlash";
 import type { IntegrationAccount, IntegrationConfig, IntegrationDef } from "@/lib/integrations/types";
@@ -132,6 +133,10 @@ export async function POST(req: Request) {
       const outcome = await reviveConnectionSources(admin, { def, connectionId: into.id, accounts, identity: from.display_name });
       await syncClient(supabase, admin, clientId, into.id, def);
       revalidateIntegrationHealth(agencyId);
+      await logConnectionEvent({
+        agencyId, action: "combine", userId: user.id, clientId, connectionId: into.id, platform: def.id,
+        detail: { signedInAs: from.display_name, removedSignIn: from.id, restored: outcome.restored, lacking: outcome.lacking.length },
+      });
       return done(back, base, {
         account: null,
         identity: into.display_name,
@@ -170,6 +175,10 @@ export async function POST(req: Request) {
     }
     await syncClient(supabase, admin, clientId, into.id, def);
     revalidateIntegrationHealth(agencyId);
+    await logConnectionEvent({
+      agencyId, action: "reuse", userId: user.id, clientId, connectionId: into.id, platform: def.id,
+      detail: { signedInAs: into.display_name, sources: moving.length, droppedSignIn: from.id },
+    });
     return done(back, base, { account: null, identity: into.display_name, note: "Using your saved sign-in" });
   } catch (err) {
     await logError({ context: "api_route", agencyId, provider: def.id, message: (err as Error).message });

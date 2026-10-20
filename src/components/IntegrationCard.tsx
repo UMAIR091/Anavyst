@@ -34,6 +34,7 @@ export function IntegrationCard({
   sameSignInHere = 0,
   accountLabel = null,
   allowsMultiple = false,
+  alsoOn = [],
 }: {
   descriptor: IntegrationDescriptor;
   clientId: string;
@@ -52,6 +53,8 @@ export function IntegrationCard({
   accountLabel?: string | null;
   /** The platform takes more than one account per client (migration 0049). */
   allowsMultiple?: boolean;
+  /** Other clients with this same account connected. */
+  alsoOn?: string[];
 }) {
   const router = useRouter();
   const [account, setAccount] = useState(source?.selectedAccountId ?? "");
@@ -171,7 +174,13 @@ export function IntegrationCard({
     ].filter(Boolean);
     const description = keeps.length
       ? `This removes ${what} and its cached data from this client only. The sign-in stays for ${keeps.join(" and ")}. Reports you’ve already generated are kept.`
-      : "This removes the connection and its cached data for this client, and deletes the saved sign-in. Reports you’ve already generated are kept.";
+      : `This removes the connection and its cached data for this client, and deletes the saved sign-in. Reports you’ve already generated are kept. ${
+          // Only Google and Meta have an official way for Anavyst to cancel
+          // the access itself; elsewhere the person removes it there.
+          descriptor.revokesAtProvider
+            ? `Anavyst also cancels its access at ${descriptor.name}, unless another connection uses the same ${descriptor.name} sign-in.`
+            : `To remove Anavyst from the ${descriptor.name} account itself too, use ${descriptor.accessSettings.label}.`
+        }`;
     if (!(await confirm({ title: `Disconnect ${descriptor.name}?`, description, confirmLabel: "Disconnect", destructive: true }))) return;
     setBusy(true);
     await fetch("/api/google/disconnect", {
@@ -309,6 +318,15 @@ export function IntegrationCard({
             <RefreshCw size={16} className={busy ? "animate-spin" : ""} /> {busy ? "Refreshing…" : "Refresh now"}
           </Button>
         </div>
+
+        {source.selectedAccountId && alsoOn.length > 0 && (
+          <p className="mt-3 flex items-start gap-2 text-xs text-ink-600">
+            <Info size={14} className="mt-0.5 shrink-0 text-info-600" />
+            <span>
+              This {noun} is also connected for {alsoOn.join(", ")}, so their reports show the same figures. Change the {noun} here if that wasn&apos;t intended.
+            </span>
+          </p>
+        )}
 
         {source.selectedAccountId && lastSyncError && !needsReconnect && (
           <div className="mt-3 flex items-start gap-2 rounded-lg border border-danger-200 bg-danger-50 px-3 py-2 text-xs text-danger-700">

@@ -15,6 +15,7 @@ import { getIntegration } from "./registry";
 import { signInDeadline } from "./tokenRenewal";
 import { agencyContact } from "@/lib/agencyContact";
 import { emailConfigured, sendEmailWithRetry, reconnectReminderEmailHtml, type ReconnectReminderItem } from "@/lib/email";
+import { logError } from "@/lib/errorLog";
 
 export type ReminderStage = "14d" | "3d" | "expired";
 
@@ -178,6 +179,14 @@ export async function sendReconnectReminders(
     } catch (err) {
       failed += 1;
       console.error(`reconnect reminder failed for agency ${agencyId}: ${(err as Error).message}`);
+      // In the error log, so a reminder that never arrives can be found.
+      await logError({
+        context: "cron",
+        agencyId,
+        errorType: "transient",
+        message: `reconnect reminder email failed (${items.length} sign-in${items.length === 1 ? "" : "s"}): ${(err as Error).message}`,
+        retryStatus: "will_retry",
+      }).catch(() => undefined);
     }
   }
   return { agencies, reminders, failed };
