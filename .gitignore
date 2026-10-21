@@ -3,8 +3,8 @@
 /out
 /build
 *.log
-.env
-.env.local
+/.env*
+!/.env.example
 .DS_Store
 next-env.d.ts
 .vercel
