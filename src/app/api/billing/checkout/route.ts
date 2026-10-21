@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getCurrentUserAndAgency } from "@/lib/agency";
+import { getCurrentUserAndAgency, isAdminRole } from "@/lib/agency";
 import { billingConfigured, findPrice, trialPricingConfigured, PAID_TRIAL_DAYS, BILLING_INTERVALS, normalizeInterval, type BillingInterval, type PlanId } from "@/lib/billing/config";
 import { usableTrialPriceId, standardPriceStartsTrial } from "@/lib/billing/prices";
 import { createCheckoutSession, PaddleError } from "@/lib/billing/paddle";
@@ -41,8 +41,11 @@ export async function GET() {
 // agency id is stamped into customData so every downstream webhook can be
 // attributed even if the user closes the tab mid-payment.
 export async function POST(req: Request) {
-  const { user, agency } = await getCurrentUserAndAgency();
+  const { user, agency, role } = await getCurrentUserAndAgency();
   if (!user || !agency) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isAdminRole(role)) {
+    return NextResponse.json({ error: "Only agency owners and admins can manage billing." }, { status: 403 });
+  }
 
   if (!billingConfigured()) {
     return NextResponse.json(
