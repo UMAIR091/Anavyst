@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getCurrentUserAndAgency } from "@/lib/agency";
+import { getCurrentUserAndAgency, isAdminRole } from "@/lib/agency";
 import { emailProvider } from "@/lib/email";
 
 export const runtime = "nodejs";
@@ -9,8 +9,9 @@ export const runtime = "nodejs";
 // Triggers a DNS (re)verification for the agency's sending domain, then
 // returns the fresh state. Safe to call repeatedly — Resend just re-checks.
 export async function POST() {
-  const { user, agency } = await getCurrentUserAndAgency();
+  const { user, agency, role } = await getCurrentUserAndAgency();
   if (!user || !agency) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isAdminRole(role)) return NextResponse.json({ error: "Only agency owners and admins can change email settings." }, { status: 403 });
 
   const supabase = createClient();
   const { data: row } = await supabase
