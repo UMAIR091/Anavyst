@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { monitoringConfigured } from "@/lib/monitoring";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,7 +42,7 @@ export async function GET() {
   };
 
   return NextResponse.json(body, {
-    status: dbOk ? 200 : 503,
+    status: body.status === "ok" ? 200 : 503,
     headers: { "Cache-Control": "no-store" },
   });
 }
