@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getCurrentUserAndAgency } from "@/lib/agency";
+import { getCurrentUserAndAgency, isAdminRole } from "@/lib/agency";
 import { getTransactionFacts, getSubscription, readSubscription, PaddleError } from "@/lib/billing/paddle";
 import { planForPrice } from "@/lib/billing/config";
 
@@ -18,8 +18,11 @@ export const runtime = "nodejs";
 // Both paths write the same fields and are idempotent, so whichever lands first
 // wins and the other is a no-op.
 export async function POST(req: Request) {
-  const { user, agency } = await getCurrentUserAndAgency();
+  const { user, agency, role } = await getCurrentUserAndAgency();
   if (!user || !agency) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isAdminRole(role)) {
+    return NextResponse.json({ error: "Only agency owners and admins can manage billing." }, { status: 403 });
+  }
 
   const body = (await req.json().catch(() => null)) as { transactionId?: string } | null;
   const transactionId = typeof body?.transactionId === "string" ? body.transactionId.trim() : "";
@@ -34,15 +37,16 @@ export async function POST(req: Request) {
     // customData; a caller may only confirm their OWN. Without this check any
     // signed-in user who learned a transaction id could attach someone else's
     // paid subscription to their workspace.
-    if (tx.agencyId && tx.agencyId !== agency.id) {
-      console.error(`Confirm rejected: txn ${transactionId} belongs to agency ${tx.agencyId}, caller is ${agency.id}`);
+    if (!tx.agencyId || tx.agencyId !== agency.id) {
+      console.error(
+        `Confirm rejected: txn ${transactionId} attribution ${tx.agencyId ?? "missing"}, caller is ${agency.id}`
+      );
       return NextResponse.json({ error: "That transaction doesn't belong to this workspace." }, { status: 403 });
     }
 
-    if (!tx.subscriptionId) {
-      // Checkout can complete moments before Paddle attaches the subscription.
-      // Reported as "pending" so the client can retry rather than treating an
-      // in-flight purchase as a failure.
+    // A subscription id can exist before Paddle has finished processing the
+    // transaction. Only the completed state proves checkout processing ended.
+    if (tx.status !== "completed" || !tx.subscriptionId) {
       return NextResponse.json({ ok: false, pending: true, message: "Payment received — still finalising." });
     }
 
