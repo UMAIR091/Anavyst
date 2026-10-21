@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getCurrentUserAndAgency } from "@/lib/agency";
+import { getCurrentUserAndAgency, isAdminRole } from "@/lib/agency";
 import { findPrice, getPlan, planForPrice, planRank, BILLING_INTERVALS, normalizeInterval, type BillingInterval, type PlanId } from "@/lib/billing/config";
 import { reconcileMissingSubscription } from "@/lib/billing/reconcile";
 import {
@@ -36,8 +36,11 @@ const INTERVALS: BillingInterval[] = BILLING_INTERVALS;
 // a price literal — prices live in Paddle and must not be duplicated here.
 
 export async function POST(req: Request) {
-  const { user, agency } = await getCurrentUserAndAgency();
+  const { user, agency, role } = await getCurrentUserAndAgency();
   if (!user || !agency) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isAdminRole(role)) {
+    return NextResponse.json({ error: "Only agency owners and admins can manage billing." }, { status: 403 });
+  }
 
   const body = (await req.json().catch(() => null)) as Body | null;
   const action = body?.action;
